@@ -11,8 +11,8 @@ jobs:
     name: Check for upstream changes
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: write       # needed to push the sync branch to this repo
+      pull-requests: write  # needed to create the sync PR in this repo
 
     steps:
       - name: Checkout
@@ -22,15 +22,12 @@ jobs:
 
       - name: Get last synced commit
         id: last-sync
-        run: |
-          LAST_SYNC=$(cat .last-sync-commit | tr -d '[:space:]')
-          echo "sha=$LAST_SYNC" >> "$GITHUB_OUTPUT"
-          echo "Last synced upstream commit: $LAST_SYNC"
+        run: echo "sha=$(cat .last-sync-commit | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
 
       - name: Get latest upstream commit
         id: upstream
         run: |
-          # Use git ls-remote to query the public upstream repo — no API calls or auth needed
+          # git ls-remote reads public repos without any auth or API calls
           LATEST=$(git ls-remote https://github.com/mapbox/earcut.git refs/heads/main | cut -f1)
           if [ -z "$LATEST" ]; then
             echo "::error::Could not resolve latest upstream commit SHA"
@@ -39,52 +36,12 @@ jobs:
           echo "sha=$LATEST" >> "$GITHUB_OUTPUT"
           echo "Latest upstream commit: $LATEST"
 
-      - name: Check if sync is needed
-        id: check
-        run: |
-          LAST="${{ steps.last-sync.outputs.sha }}"
-          LATEST="${{ steps.upstream.outputs.sha }}"
-          if [ "$LAST" = "$LATEST" ]; then
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-            echo "Already up to date with upstream ($LATEST)."
-          else
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-            echo "Upstream has new commits since $LAST (latest: $LATEST)."
-          fi
-
-      - name: Clone upstream repository
-        if: steps.check.outputs.needed == 'true'
-        run: |
-          LATEST="${{ steps.upstream.outputs.sha }}"
-          # Shallow-clone main of the public upstream repo — no auth required
-          git clone --depth 50 https://github.com/mapbox/earcut.git /tmp/earcut-upstream
-          echo "Cloned upstream at $LATEST"
-          echo "Upstream files:"
-          find /tmp/earcut-upstream -not -path '/tmp/earcut-upstream/.git/*' -type f | sort
-
-      - name: Build commit list for PR body
-        if: steps.check.outputs.needed == 'true'
-        id: diff
-        run: |
-          LAST="${{ steps.last-sync.outputs.sha }}"
-          LATEST="${{ steps.upstream.outputs.sha }}"
-
-          # Use git log to list commits between last-sync and latest — pure git, no API calls
-          COMMITS=$(git -C /tmp/earcut-upstream log \
-            --pretty=format:"- [%h](https://github.com/mapbox/earcut/commit/%H) %s" \
-            "${LAST}..${LATEST}" 2>/dev/null || echo "- (could not retrieve commit list)")
-
-          if [ -z "$COMMITS" ]; then
-            COMMITS="- (no commits found)"
-          fi
-
-          echo "COMMITS<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$COMMITS" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-
-      - name: Create sync branch and PR
-        if: steps.check.outputs.needed == 'true'
+      - name: Clone upstream and create sync PR
+        if: steps.last-sync.outputs.sha != steps.upstream.outputs.sha
         env:
+          # GH_TOKEN is required here for write operations on THIS repository:
+          # creating the sync branch, the auto-sync label, and the pull request.
+          # It does NOT need any additional configuration — GitHub provides it automatically.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           LAST="${{ steps.last-sync.outputs.sha }}"
@@ -92,64 +49,70 @@ jobs:
           BRANCH="auto-sync/upstream-${LATEST:0:7}"
           DATE=$(date -u +"%Y-%m-%d")
 
+          echo "Upstream has new commits since ${LAST:0:7} (latest: ${LATEST:0:7})"
+
+          # Clone the full upstream repo with enough depth to cover the commit range
+          git clone --depth 50 https://github.com/mapbox/earcut.git /tmp/earcut-upstream
+
+          # Build commit list using git log — no API calls needed
+          COMMITS=$(git -C /tmp/earcut-upstream log \
+            --pretty=format:"- [%h](https://github.com/mapbox/earcut/commit/%H) %s" \
+            "${LAST}..${LATEST}" 2>/dev/null)
+          [ -z "$COMMITS" ] && COMMITS="- (commit history not available in shallow clone)"
+
+          # Set up git identity for commits to this repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Create a new branch from main
           git checkout -b "$BRANCH"
 
-          # Update the .last-sync-commit file
+          # Update sync marker
           echo "$LATEST" > .last-sync-commit
 
-          # Mirror ALL upstream source files into .upstream/ so reviewers and
-          # Copilot can see every changed file side-by-side with the C# port
+          # Mirror the entire upstream repo into .upstream/ for side-by-side reference
           rm -rf .upstream
-          mkdir -p .upstream
-          rsync -a --exclude='.git' /tmp/earcut-upstream/ .upstream/
+          cp -r /tmp/earcut-upstream .upstream
+          rm -rf .upstream/.git
 
           git add .last-sync-commit .upstream/
-          git commit -m "chore: update upstream sync to ${LATEST:0:7}
+          git commit -m "chore: sync upstream earcut to ${LATEST:0:7}
 
 Upstream commits since ${LAST:0:7}:
-${{ steps.diff.outputs.COMMITS }}"
-
+$COMMITS"
           git push origin "$BRANCH"
 
-          # Ensure the auto-sync label exists
+          # Ensure the auto-sync label exists in this repo
           gh label create "auto-sync" \
             --description "Automatically generated upstream sync PR" \
-            --color "0075ca" \
-            --repo "${{ github.repository }}" 2>/dev/null || true
+            --color "0075ca" 2>/dev/null || true
 
-          # Create the pull request
           gh pr create \
             --title "chore: sync upstream earcut changes (${LATEST:0:7}) — ${DATE}" \
+            --label "auto-sync" \
+            --base main \
+            --head "$BRANCH" \
             --body "## Upstream Sync
 
 This PR was automatically generated by the [Upstream Sync workflow](.github/workflows/upstream-sync.yml).
 
-**Upstream repository:** https://github.com/mapbox/earcut  
-**Previous synced commit:** [\`${LAST:0:7}\`](https://github.com/mapbox/earcut/commit/${LAST})  
-**New upstream commit:** [\`${LATEST:0:7}\`](https://github.com/mapbox/earcut/commit/${LATEST})  
+**Upstream repository:** https://github.com/mapbox/earcut
+**Previous synced commit:** [\`${LAST:0:7}\`](https://github.com/mapbox/earcut/commit/${LAST})
+**New upstream commit:** [\`${LATEST:0:7}\`](https://github.com/mapbox/earcut/commit/${LATEST})
 **Compare:** https://github.com/mapbox/earcut/compare/${LAST}...${LATEST}
 
 ### Upstream commits included
 
-${{ steps.diff.outputs.COMMITS }}
+$COMMITS
 
 ### What to do
 
-The complete upstream repository at the new commit has been mirrored into \`.upstream/\` so you can diff every changed file side-by-side:
+The complete upstream repository has been mirrored into \`.upstream/\` for side-by-side reference:
 
-1. Review the full upstream diff: https://github.com/mapbox/earcut/compare/${LAST}...${LATEST}
+1. Review the diff: https://github.com/mapbox/earcut/compare/${LAST}...${LATEST}
 2. Port algorithm changes from \`.upstream/src/earcut.js\` to \`src/Earcut/Earcut.cs\` using [PORTING_GUIDE.md](PORTING_GUIDE.md).
-3. If test fixtures were added/changed in \`.upstream/test/fixtures/\`, copy them to \`test/Earcut.Tests/fixtures/\` and update \`test/Earcut.Tests/expected.json\`.
+3. Sync any changed test fixtures from \`.upstream/test/\` to \`test/Earcut.Tests/fixtures/\` and update \`test/Earcut.Tests/expected.json\`.
 4. Run \`dotnet test\` and ensure all tests pass.
 5. Update \`PORTING_GUIDE.md\` if new language patterns were introduced.
 
 > [!NOTE]
-> GitHub Copilot coding agent can be invoked on this PR to assist with porting the JS changes to C#." \
-            --label "auto-sync" \
-            --base main \
-            --head "$BRANCH" \
-            --repo "${{ github.repository }}"
+> GitHub Copilot coding agent can be invoked on this PR to assist with porting the JS changes to C#."
