@@ -1,5 +1,6 @@
 using BenchmarkDotNet.Attributes;
 using ModernEarcut;
+using System.Text.Json;
 
 namespace Earcut.Benchmarks;
 
@@ -8,6 +9,12 @@ public class TriangulationBenchmarks
 {
     private double[] _square = null!;
     private double[] _complexPolygon = null!;
+    private double[] _dudeVertices = null!;
+    private int[] _dudeHoles = null!;
+    private double[] _waterVertices = null!;
+    private int[] _waterHoles = null!;
+    private double[] _waterHugeVertices = null!;
+    private int[] _waterHugeHoles = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -23,6 +30,49 @@ public class TriangulationBenchmarks
             vertices.Add(Math.Sin(angle) * 100);
         }
         _complexPolygon = vertices.ToArray();
+
+        // Load dude fixture
+        LoadFixture("dude", out _dudeVertices, out _dudeHoles);
+        
+        // Load water fixture
+        LoadFixture("water", out _waterVertices, out _waterHoles);
+        
+        // Load water-huge fixture
+        LoadFixture("water-huge", out _waterHugeVertices, out _waterHugeHoles);
+    }
+
+    private void LoadFixture(string name, out double[] vertices, out int[] holes)
+    {
+        try
+        {
+            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "test", "Earcut.Tests", "fixtures", $"{name}.json");
+            if (!File.Exists(path))
+            {
+                // Fallback to simple polygon
+                vertices = [0, 0, 10, 0, 10, 10, 0, 10];
+                holes = [];
+                return;
+            }
+
+            var json = File.ReadAllText(path);
+            var coords = JsonSerializer.Deserialize<double[][][]>(json);
+            if (coords != null)
+            {
+                var data = ModernEarcut.Earcut.Flatten(coords);
+                vertices = data.vertices;
+                holes = data.holes;
+            }
+            else
+            {
+                vertices = [0, 0, 10, 0, 10, 10, 0, 10];
+                holes = [];
+            }
+        }
+        catch
+        {
+            vertices = [0, 0, 10, 0, 10, 10, 0, 10];
+            holes = [];
+        }
     }
 
     [Benchmark]
@@ -35,5 +85,23 @@ public class TriangulationBenchmarks
     public int[] TriangulateComplexPolygon()
     {
         return ModernEarcut.Earcut.Triangulate(_complexPolygon);
+    }
+
+    [Benchmark]
+    public int[] TriangulateDude()
+    {
+        return ModernEarcut.Earcut.Triangulate(_dudeVertices, _dudeHoles);
+    }
+
+    [Benchmark]
+    public int[] TriangulateWater()
+    {
+        return ModernEarcut.Earcut.Triangulate(_waterVertices, _waterHoles);
+    }
+
+    [Benchmark]
+    public int[] TriangulateWaterHuge()
+    {
+        return ModernEarcut.Earcut.Triangulate(_waterHugeVertices, _waterHugeHoles);
     }
 }
