@@ -28,12 +28,12 @@ public class TriangulationBenchmarks
     [Benchmark]
     public int[] TriangulateSquare()
     {
-        return Earcut.Triangulate(_square);
+        return ModernEarcut.Earcut.Triangulate(_square);
     }
 
     [Benchmark]
     public int[] TriangulateComplexPolygon()
     {
-        return Earcut.Triangulate(_complexPolygon);
+        return ModernEarcut.Earcut.Triangulate(_complexPolygon);
     }
 }
