@@ -1,73 +1,198 @@
-using System;
-using System.Collections.Generic;
+// This is an automated Csharp port of https://github.com/mapbox/earcut.
+// Copyright 2026 Michael Conrad.
+// Licensed under the MIT License.
+// See LICENSE file for details.
+
+using System.Runtime.CompilerServices;
 
 namespace Earcut;
 
 /// <summary>
-/// Fast polygon triangulation algorithm using ear clipping technique.
-/// Direct port from the JavaScript earcut library.
+/// Fast polygon triangulation using the ear-clipping technique.
+/// Port of the mapbox/earcut JavaScript library.
 /// </summary>
 public static class Earcut
 {
+    // ───────────────────────────── public API ──────────────────────────────
+
     /// <summary>
-    /// Triangulates a polygon given as a flat array of vertex coordinates.
+    /// Triangulates a polygon with optional holes.
     /// </summary>
-    /// <param name="data">Flat array of vertex coordinates like [x0,y0, x1,y1, x2,y2, ...]</param>
-    /// <param name="holeIndices">Array of hole indices if any (e.g. [5, 8] for a 12-vertex input would mean one hole with vertices 5–7 and another with 8–11)</param>
-    /// <param name="dim">Number of coordinates per vertex in the input array (2 by default)</param>
-    /// <returns>Array of triangulated indices, where each group of three indices forms a triangle</returns>
-    public static int[] Triangulate(ReadOnlySpan<double> data, ReadOnlySpan<int> holeIndices = default, int dim = 2)
+    /// <param name="data">
+    /// Flat array of vertex coordinates: [x0, y0, x1, y1, …].
+    /// </param>
+    /// <param name="holeIndices">
+    /// Hole starting indices expressed in <em>vertex</em> counts, not coordinate counts.
+    /// </param>
+    /// <param name="dim">Number of coordinates per vertex (default 2).</param>
+    /// <returns>Flat array of triangle vertex indices (length is a multiple of 3).</returns>
+    public static int[] Triangulate(
+        ReadOnlySpan<double> data,
+        ReadOnlySpan<int> holeIndices = default,
+        int dim = 2)
     {
-        bool hasHoles = holeIndices.Length > 0;
+        bool hasHoles = !holeIndices.IsEmpty;
         int outerLen = hasHoles ? holeIndices[0] * dim : data.Length;
-        Node? outerNode = LinkedList(data, 0, outerLen, dim, true);
-        var triangles = new List<int>();
 
-        if (outerNode == null || outerNode.next == outerNode.prev) return triangles.ToArray();
+        Node? outerNode = BuildLinkedList(data, 0, outerLen, dim, clockwise: true);
 
-        double minX = 0, minY = 0, maxX = 0, maxY = 0, x, y, invSize = 0;
+        if (outerNode is null || outerNode.Next == outerNode.Prev)
+        {
+            return [];
+        }
 
+        // Pre-allocate: a simple polygon with V vertices produces at most V-2 triangles.
+        int vertexCount = data.Length / dim;
+        var triangles = new List<int>(Math.Max(0, (vertexCount - 2) * 3));
+
+        if (hasHoles)
+        {
+            outerNode = EliminateHoles(data, holeIndices, outerNode, dim);
+        }
+
+        double minX = 0, minY = 0, invSize = 0;
+
+        // For non-trivial shapes use a z-order curve hash for faster look-ups.
         if (data.Length > 80 * dim)
         {
-            minX = maxX = data[0];
-            minY = maxY = data[1];
+            minX = data[0];
+            minY = data[1];
+            double maxX = minX;
+            double maxY = minY;
 
-            // calculate polygon bbox
             for (int i = dim; i < outerLen; i += dim)
             {
-                x = data[i];
-                y = data[i + 1];
-                if (x < minX) minX = x;
-                if (y < minY) minY = y;
-                if (x > maxX) maxX = x;
-                if (y > maxY) maxY = y;
+                double x = data[i];
+                double y = data[i + 1];
+                if (x < minX)
+                {
+                    minX = x;
+                }
+
+                if (y < minY)
+                {
+                    minY = y;
+                }
+
+                if (x > maxX)
+                {
+                    maxX = x;
+                }
+
+                if (y > maxY)
+                {
+                    maxY = y;
+                }
             }
 
-            // minX, minY and invSize are later used to transform coords into integers for z-order calculation
             invSize = Math.Max(maxX - minX, maxY - minY);
-            invSize = invSize != 0 ? 32767 / invSize : 0;
+            invSize = invSize != 0.0 ? 32767.0 / invSize : 0.0;
         }
 
-        if (outerNode != null)
-        {
-            if (hasHoles) outerNode = EliminateHoles(data, holeIndices, outerNode, dim);
-
-            // run earcut algorithm
-            if (data.Length > 80 * dim)
-            {
-                EarcutLinked(outerNode, triangles, dim, minX, minY, invSize, 0);
-            }
-            else
-            {
-                EarcutLinked(outerNode, triangles, dim, 0, 0, 0, 0);
-            }
-        }
+        EarcutLinked(outerNode, triangles, dim, minX, minY, invSize, pass: 0);
 
         return triangles.ToArray();
     }
 
-    // create a circular doubly linked list from polygon points in the specified winding order
-    private static Node? LinkedList(ReadOnlySpan<double> data, int start, int end, int dim, bool clockwise)
+    /// <summary>
+    /// Returns the percentage difference between the polygon area and its
+    /// triangulation area — useful for verifying triangulation correctness.
+    /// </summary>
+    public static double Deviation(
+        ReadOnlySpan<double> data,
+        ReadOnlySpan<int> holeIndices,
+        int dim,
+        ReadOnlySpan<int> triangles)
+    {
+        bool hasHoles = !holeIndices.IsEmpty;
+        int outerLen = hasHoles ? holeIndices[0] * dim : data.Length;
+
+        double polygonArea = Math.Abs(SignedArea(data, 0, outerLen, dim));
+
+        if (hasHoles)
+        {
+            for (int i = 0; i < holeIndices.Length; i++)
+            {
+                int start = holeIndices[i] * dim;
+                int end = i < holeIndices.Length - 1
+                    ? holeIndices[i + 1] * dim
+                    : data.Length;
+                polygonArea -= Math.Abs(SignedArea(data, start, end, dim));
+            }
+        }
+
+        double trianglesArea = 0.0;
+
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            int a = triangles[i] * dim;
+            int b = triangles[i + 1] * dim;
+            int c = triangles[i + 2] * dim;
+            trianglesArea += Math.Abs(
+                (data[a] - data[c]) * (data[b + 1] - data[a + 1]) -
+                (data[a] - data[b]) * (data[c + 1] - data[a + 1]));
+        }
+
+        return polygonArea == 0.0 && trianglesArea == 0.0
+            ? 0.0
+            : Math.Abs((trianglesArea - polygonArea) / polygonArea);
+    }
+
+    /// <summary>
+    /// Converts a multi-dimensional coordinate array (e.g. GeoJSON rings)
+    /// into the flat form that <see cref="Triangulate"/> expects.
+    /// </summary>
+    public static (double[] Vertices, int[] Holes, int Dimensions) Flatten(
+        double[][][] data)
+    {
+        int dimensions = data[0][0].Length;
+
+        // Pre-compute total capacity.
+        int totalCoords = 0;
+        foreach (double[][] ring in data)
+        {
+            totalCoords += ring.Length * dimensions;
+        }
+
+        var vertices = new List<double>(totalCoords);
+        var holes = new List<int>(data.Length - 1);
+        int holeIndex = 0;
+        int prevLen = 0;
+
+        foreach (double[][] ring in data)
+        {
+            foreach (double[] point in ring)
+            {
+                for (int d = 0; d < dimensions; d++)
+                {
+                    vertices.Add(point[d]);
+                }
+            }
+
+            if (prevLen > 0)
+            {
+                holeIndex += prevLen;
+                holes.Add(holeIndex);
+            }
+
+            prevLen = ring.Length;
+        }
+
+        return (vertices.ToArray(), holes.ToArray(), dimensions);
+    }
+
+    // ──────────────────────── linked-list helpers ───────────────────────────
+
+    /// <summary>
+    /// Creates a circular doubly-linked list from polygon points in the
+    /// specified winding order.
+    /// </summary>
+    private static Node? BuildLinkedList(
+        ReadOnlySpan<double> data,
+        int start,
+        int end,
+        int dim,
+        bool clockwise)
     {
         Node? last = null;
 
@@ -86,26 +211,24 @@ public static class Earcut
             }
         }
 
-        if (last != null && Equals(last, last.next))
+        if (last is not null && CoordsEqual(last, last.Next!))
         {
             RemoveNode(last);
-            last = last.next;
-        }
-
-        if (last != null)
-        {
-            last.next!.prev = last;
-            last.prev!.next = last;
+            last = last.Next;
         }
 
         return last;
     }
 
-    // eliminate colinear or duplicate points
+    /// <summary>Eliminates collinear or duplicate points.</summary>
     private static Node? FilterPoints(Node? start, Node? end = null)
     {
-        if (start == null) return start;
-        if (end == null) end = start;
+        if (start is null)
+        {
+            return null;
+        }
+
+        end ??= start;
 
         Node p = start;
         bool again;
@@ -114,76 +237,97 @@ public static class Earcut
         {
             again = false;
 
-            if (!p.steiner && (Equals(p, p.next) || Area(p.prev, p, p.next) == 0))
+            if (!p.Steiner &&
+                (CoordsEqual(p, p.Next!) || Area(p.Prev!, p, p.Next!) == 0.0))
             {
                 RemoveNode(p);
-                p = end = p.prev!;
-                if (p == p.next) break;
+                p = end = p.Prev!;
+                if (p == p.Next)
+                {
+                    break;
+                }
+
                 again = true;
             }
             else
             {
-                p = p.next!;
+                p = p.Next!;
             }
-        } while (again || p != end);
+        }
+        while (again || p != end);
 
         return end;
     }
 
-    // main ear slicing loop which triangulates a polygon (given as a linked list)
-    private static void EarcutLinked(Node? ear, List<int> triangles, int dim, double minX, double minY, double invSize, int pass)
-    {
-        if (ear == null) return;
+    // ───────────────────────── ear-clipping core ───────────────────────────
 
-        // iterate through ears, slicing them one by one
-        if (pass == 0 && invSize != 0) IndexCurve(ear, minX, minY, invSize);
+    /// <summary>Main ear-slicing loop.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void EarcutLinked(
+        Node? ear,
+        List<int> triangles,
+        int dim,
+        double minX,
+        double minY,
+        double invSize,
+        int pass)
+    {
+        if (ear is null)
+        {
+            return;
+        }
+
+        if (pass == 0 && invSize != 0.0)
+        {
+            IndexCurve(ear, minX, minY, invSize);
+        }
 
         Node stop = ear;
-        Node? prev, next;
 
-        while (ear!.prev != ear.next)
+        while (ear!.Prev != ear.Next)
         {
-            prev = ear.prev;
-            next = ear.next;
+            Node prev = ear.Prev!;
+            Node next = ear.Next!;
 
-            bool isEar = invSize != 0 ? IsEarHashed(ear, minX, minY, invSize) : IsEar(ear);
-
-            if (isEar)
+            if (invSize != 0.0
+                ? IsEarHashed(ear, minX, minY, invSize)
+                : IsEar(ear))
             {
-                // output previous, current and next vertices to form a triangle
-                triangles.Add(prev!.i);
-                triangles.Add(ear.i);
-                triangles.Add(next!.i);
+                // Emit triangle.
+                triangles.Add(prev.I);
+                triangles.Add(ear.I);
+                triangles.Add(next.I);
 
                 RemoveNode(ear);
 
-                // skip the next vertex
-                ear = next.next;
-                stop = next.next;
-
+                // Skip the next vertex — produces fewer sliver triangles.
+                ear = next.Next!;
+                stop = next.Next!;
                 continue;
             }
 
             ear = next;
 
-            // if we looped through all possible ears and can't find any more triangles to cut
             if (ear == stop)
             {
-                // try filtering points and slicing again
-                if (pass == 0)
+                switch (pass)
                 {
-                    EarcutLinked(FilterPoints(ear), triangles, dim, minX, minY, invSize, 1);
-                }
-                // if this didn't work, try curing all small self-intersections locally
-                else if (pass == 1)
-                {
-                    ear = CureLocalIntersections(FilterPoints(ear), triangles);
-                    EarcutLinked(ear, triangles, dim, minX, minY, invSize, 2);
-                }
-                // as a last resort, try splitting remaining polygon into two
-                else if (pass == 2)
-                {
-                    SplitEarcut(ear, triangles, dim, minX, minY, invSize);
+                    case 0:
+                        EarcutLinked(
+                            FilterPoints(ear), triangles, dim,
+                            minX, minY, invSize, pass: 1);
+                        break;
+
+                    case 1:
+                        ear = CureLocalIntersections(FilterPoints(ear)!, triangles);
+                        EarcutLinked(
+                            ear, triangles, dim,
+                            minX, minY, invSize, pass: 2);
+                        break;
+
+                    case 2:
+                        SplitEarcut(ear, triangles, dim, minX, minY, invSize);
+                        break;
                 }
 
                 break;
@@ -191,530 +335,725 @@ public static class Earcut
         }
     }
 
-    // check whether a polygon node forms a valid ear with adjacent nodes
+    /// <summary>Checks whether a polygon node forms a valid ear.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool IsEar(Node ear)
     {
-        Node a = ear.prev!;
+        Node a = ear.Prev!;
         Node b = ear;
-        Node c = ear.next!;
+        Node c = ear.Next!;
 
-        if (Area(a, b, c) >= 0) return false; // reflex, can't be an ear
+        if (Area(a, b, c) >= 0.0)
+        {
+            return false;
+        }
 
-        // now make sure we don't have other points inside the potential ear
-        double ax = a.x, bx = b.x, cx = c.x, ay = a.y, by = b.y, cy = c.y;
+        double ax = a.X, ay = a.Y;
+        double bx = b.X, by = b.Y;
+        double cx = c.X, cy = c.Y;
 
-        // triangle bbox
-        double x0 = ax < bx ? (ax < cx ? ax : cx) : (bx < cx ? bx : cx);
-        double y0 = ay < by ? (ay < cy ? ay : cy) : (by < cy ? by : cy);
-        double x1 = ax > bx ? (ax > cx ? ax : cx) : (bx > cx ? bx : cx);
-        double y1 = ay > by ? (ay > cy ? ay : cy) : (by > cy ? by : cy);
+        double x0 = Min3(ax, bx, cx);
+        double y0 = Min3(ay, by, cy);
+        double x1 = Max3(ax, bx, cx);
+        double y1 = Max3(ay, by, cy);
 
-        Node? p = c.next;
+        Node p = c.Next!;
+
         while (p != a)
         {
-            if (p!.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 &&
-                PointInTriangle(ax, ay, bx, by, cx, cy, p.x, p.y) &&
-                Area(p.prev, p, p.next) >= 0) return false;
-            p = p.next;
+            if (p.X >= x0 && p.X <= x1 &&
+                p.Y >= y0 && p.Y <= y1 &&
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, p.X, p.Y) &&
+                Area(p.Prev!, p, p.Next!) >= 0.0)
+            {
+                return false;
+            }
+
+            p = p.Next!;
         }
 
         return true;
     }
 
-    private static bool IsEarHashed(Node ear, double minX, double minY, double invSize)
+    /// <summary>Ear check optimised with z-order spatial indexing.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static bool IsEarHashed(
+        Node ear,
+        double minX,
+        double minY,
+        double invSize)
     {
-        Node a = ear.prev!;
+        Node a = ear.Prev!;
         Node b = ear;
-        Node c = ear.next!;
+        Node c = ear.Next!;
 
-        if (Area(a, b, c) >= 0) return false;
-
-        double ax = a.x, bx = b.x, cx = c.x, ay = a.y, by = b.y, cy = c.y;
-
-        // triangle bbox
-        double x0 = ax < bx ? (ax < cx ? ax : cx) : (bx < cx ? bx : cx);
-        double y0 = ay < by ? (ay < cy ? ay : cy) : (by < cy ? by : cy);
-        double x1 = ax > bx ? (ax > cx ? ax : cx) : (bx > cx ? bx : cx);
-        double y1 = ay > by ? (ay > cy ? ay : cy) : (by > cy ? by : cy);
-
-        // z-order range for the current triangle bbox
-        int minZ = ZOrder((int)((x0 - minX) * invSize), (int)((y0 - minY) * invSize));
-        int maxZ = ZOrder((int)((x1 - minX) * invSize), (int)((y1 - minY) * invSize));
-
-        Node? p = ear.prevZ;
-        Node? n = ear.nextZ;
-
-        // look for points inside the triangle in both directions
-        while (p != null && p.z >= minZ && n != null && n.z <= maxZ)
+        if (Area(a, b, c) >= 0.0)
         {
-            if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 && p != a && p != c &&
-                PointInTriangle(ax, ay, bx, by, cx, cy, p.x, p.y) && Area(p.prev, p, p.next) >= 0) return false;
-
-            p = p.prevZ;
-
-            if (n.x >= x0 && n.x <= x1 && n.y >= y0 && n.y <= y1 && n != a && n != c &&
-                PointInTriangle(ax, ay, bx, by, cx, cy, n.x, n.y) && Area(n.prev, n, n.next) >= 0) return false;
-
-            n = n.nextZ;
+            return false;
         }
 
-        // look for remaining points in decreasing z-order
-        while (p != null && p.z >= minZ)
+        double ax = a.X, ay = a.Y;
+        double bx = b.X, by = b.Y;
+        double cx = c.X, cy = c.Y;
+
+        double x0 = Min3(ax, bx, cx);
+        double y0 = Min3(ay, by, cy);
+        double x1 = Max3(ax, bx, cx);
+        double y1 = Max3(ay, by, cy);
+
+        int minZ = ZOrder(x0, y0, minX, minY, invSize);
+        int maxZ = ZOrder(x1, y1, minX, minY, invSize);
+
+        Node? p = ear.PrevZ;
+        Node? n = ear.NextZ;
+
+        while (p is not null && p.Z >= minZ &&
+               n is not null && n.Z <= maxZ)
         {
-            if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 && p != a && p != c &&
-                PointInTriangle(ax, ay, bx, by, cx, cy, p.x, p.y) && Area(p.prev, p, p.next) >= 0) return false;
-            p = p.prevZ;
+            if (p.X >= x0 && p.X <= x1 && p.Y >= y0 && p.Y <= y1 &&
+                p != a && p != c &&
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, p.X, p.Y) &&
+                Area(p.Prev!, p, p.Next!) >= 0.0)
+            {
+                return false;
+            }
+
+            p = p.PrevZ;
+
+            if (n.X >= x0 && n.X <= x1 && n.Y >= y0 && n.Y <= y1 &&
+                n != a && n != c &&
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, n.X, n.Y) &&
+                Area(n.Prev!, n, n.Next!) >= 0.0)
+            {
+                return false;
+            }
+
+            n = n.NextZ;
         }
 
-        // look for remaining points in increasing z-order
-        while (n != null && n.z <= maxZ)
+        while (p is not null && p.Z >= minZ)
         {
-            if (n.x >= x0 && n.x <= x1 && n.y >= y0 && n.y <= y1 && n != a && n != c &&
-                PointInTriangle(ax, ay, bx, by, cx, cy, n.x, n.y) && Area(n.prev, n, n.next) >= 0) return false;
-            n = n.nextZ;
+            if (p.X >= x0 && p.X <= x1 && p.Y >= y0 && p.Y <= y1 &&
+                p != a && p != c &&
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, p.X, p.Y) &&
+                Area(p.Prev!, p, p.Next!) >= 0.0)
+            {
+                return false;
+            }
+
+            p = p.PrevZ;
+        }
+
+        while (n is not null && n.Z <= maxZ)
+        {
+            if (n.X >= x0 && n.X <= x1 && n.Y >= y0 && n.Y <= y1 &&
+                n != a && n != c &&
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, n.X, n.Y) &&
+                Area(n.Prev!, n, n.Next!) >= 0.0)
+            {
+                return false;
+            }
+
+            n = n.NextZ;
         }
 
         return true;
     }
 
-    // go through all polygon nodes and cure small local self-intersections
-    private static Node? CureLocalIntersections(Node? start, List<int> triangles)
+    // ───────────────────────── intersection cures ──────────────────────────
+
+    /// <summary>
+    /// Walks the polygon and fixes small local self-intersections by
+    /// emitting a triangle at each crossing.
+    /// </summary>
+    private static Node CureLocalIntersections(Node start, List<int> triangles)
     {
-        Node? p = start;
+        Node p = start;
+
         do
         {
-            Node a = p!.prev!;
-            Node b = p.next!.next!;
+            Node a = p.Prev!;
+            Node b = p.Next!.Next!;
 
-            if (!Equals(a, b) && Intersects(a, p, p.next, b) && LocallyInside(a, b) && LocallyInside(b, a))
+            if (!CoordsEqual(a, b) &&
+                Intersects(a, p, p.Next!, b) &&
+                LocallyInside(a, b) &&
+                LocallyInside(b, a))
             {
-                triangles.Add(a.i);
-                triangles.Add(p.i);
-                triangles.Add(b.i);
+                triangles.Add(a.I);
+                triangles.Add(p.I);
+                triangles.Add(b.I);
 
-                // remove two nodes involved
                 RemoveNode(p);
-                RemoveNode(p.next);
+                RemoveNode(p.Next!);
 
                 p = start = b;
             }
-            p = p.next;
-        } while (p != start);
 
-        return FilterPoints(p);
+            p = p.Next!;
+        }
+        while (p != start);
+
+        return FilterPoints(p)!;
     }
 
-    // try splitting polygon and triangulate them independently
-    private static void SplitEarcut(Node start, List<int> triangles, int dim, double minX, double minY, double invSize)
+    /// <summary>
+    /// Last-resort: find a valid diagonal, split the polygon in two, and
+    /// triangulate each half independently.
+    /// </summary>
+    private static void SplitEarcut(
+        Node start,
+        List<int> triangles,
+        int dim,
+        double minX,
+        double minY,
+        double invSize)
     {
-        // look for a valid diagonal that divides the polygon into two
-        Node? a = start;
+        Node a = start;
+
         do
         {
-            Node? b = a!.next!.next;
-            while (b != a.prev)
+            Node b = a.Next!.Next!;
+
+            while (b != a.Prev)
             {
-                if (a.i != b!.i && IsValidDiagonal(a, b))
+                if (a.I != b.I && IsValidDiagonal(a, b))
                 {
-                    // split the polygon in two by the diagonal
-                    Node? c = SplitPolygon(a, b);
+                    Node c = SplitPolygon(a, b);
 
-                    // filter colinear points around the cuts
-                    a = FilterPoints(a, a.next);
-                    c = FilterPoints(c, c!.next);
+                    a = FilterPoints(a, a.Next)!;
+                    c = FilterPoints(c, c.Next)!;
 
-                    // run earcut on each half
-                    EarcutLinked(a, triangles, dim, minX, minY, invSize, 0);
-                    EarcutLinked(c, triangles, dim, minX, minY, invSize, 0);
+                    EarcutLinked(a, triangles, dim, minX, minY, invSize, pass: 0);
+                    EarcutLinked(c, triangles, dim, minX, minY, invSize, pass: 0);
                     return;
                 }
-                b = b.next;
+
+                b = b.Next!;
             }
-            a = a.next;
-        } while (a != start);
+
+            a = a.Next!;
+        }
+        while (a != start);
     }
 
-    // link every hole into the outer loop, producing a single-ring polygon without holes
-    private static Node EliminateHoles(ReadOnlySpan<double> data, ReadOnlySpan<int> holeIndices, Node outerNode, int dim)
-    {
-        var queue = new List<Node?>();
+    // ────────────────────────── hole elimination ───────────────────────────
 
-        int len = holeIndices.Length;
-        for (int i = 0; i < len; i++)
+    /// <summary>
+    /// Links every hole into the outer loop, producing a single-ring polygon
+    /// without holes.
+    /// </summary>
+    private static Node EliminateHoles(
+        ReadOnlySpan<double> data,
+        ReadOnlySpan<int> holeIndices,
+        Node outerNode,
+        int dim)
+    {
+        var queue = new List<Node>(holeIndices.Length);
+
+        for (int i = 0; i < holeIndices.Length; i++)
         {
             int start = holeIndices[i] * dim;
-            int end = i < len - 1 ? holeIndices[i + 1] * dim : data.Length;
-            Node? list = LinkedList(data, start, end, dim, false);
-            if (list == list!.next) list.steiner = true;
-            queue.Add(GetLeftmost(list));
+            int end = i < holeIndices.Length - 1
+                ? holeIndices[i + 1] * dim
+                : data.Length;
+
+            Node? list = BuildLinkedList(data, start, end, dim, clockwise: false);
+
+            if (list is not null)
+            {
+                if (list == list.Next)
+                {
+                    list.Steiner = true;
+                }
+
+                queue.Add(GetLeftmost(list));
+            }
         }
 
-        queue.Sort((a, b) =>
+        queue.Sort(static (a, b) =>
         {
-            if (a == null || b == null) return 0;
-            return a.x.CompareTo(b.x);
+            int cmp = a.X.CompareTo(b.X);
+            if (cmp != 0)
+            {
+                return cmp;
+            }
+
+            cmp = a.Y.CompareTo(b.Y);
+            if (cmp != 0)
+            {
+                return cmp;
+            }
+
+            double aSlope = (a.Next!.Y - a.Y) / (a.Next.X - a.X);
+            double bSlope = (b.Next!.Y - b.Y) / (b.Next.X - b.X);
+            return aSlope.CompareTo(bSlope);
         });
 
-        // process holes from left to right
-        for (int i = 0; i < queue.Count; i++)
+        foreach (Node hole in queue)
         {
-            if (queue[i] != null)
-            {
-                EliminateHole(queue[i]!, outerNode);
-                outerNode = FilterPoints(outerNode, outerNode.next)!;
-            }
+            outerNode = EliminateHole(hole, outerNode);
         }
 
         return outerNode;
     }
 
-    // find a bridge connecting given point and the polygon
-    private static void EliminateHole(Node hole, Node outerNode)
+    private static Node EliminateHole(Node hole, Node outerNode)
     {
         Node? bridge = FindHoleBridge(hole, outerNode);
-        if (bridge == null) return;
 
-        Node b = SplitPolygon(bridge, hole)!;
+        if (bridge is null)
+        {
+            return outerNode;
+        }
 
-        // filter out colinear points around cuts
-        FilterPoints(FilterPoints(b, b.next), b.next);
+        Node bridgeReverse = SplitPolygon(bridge, hole);
+        FilterPoints(bridgeReverse, bridgeReverse.Next);
+        return FilterPoints(bridge, bridge.Next)!;
     }
 
-    // David Eberly's algorithm for finding a bridge between hole and outer polygon
+    /// <summary>
+    /// David Eberly's algorithm for finding a bridge between a hole and the
+    /// outer polygon.
+    /// </summary>
     private static Node? FindHoleBridge(Node hole, Node outerNode)
     {
-        Node? p = outerNode;
-        double hx = hole.x;
-        double hy = hole.y;
+        Node p = outerNode;
+        double hx = hole.X;
+        double hy = hole.Y;
         double qx = double.NegativeInfinity;
         Node? m = null;
 
-        // find a segment intersected by a ray from the hole's leftmost point to the left
+        if (CoordsEqual(hole, p))
+        {
+            return p;
+        }
+
         do
         {
-            if (hy <= p!.y && hy >= p.next!.y && p.next.y != p.y)
+            if (CoordsEqual(hole, p.Next!))
             {
-                double x = p.x + (hy - p.y) * (p.next.x - p.x) / (p.next.y - p.y);
+                return p.Next;
+            }
+
+            if (hy <= p.Y && hy >= p.Next!.Y && p.Next.Y != p.Y)
+            {
+                double x = p.X + (hy - p.Y) * (p.Next.X - p.X) / (p.Next.Y - p.Y);
+
                 if (x <= hx && x > qx)
                 {
                     qx = x;
-                    m = p.x < p.next.x ? p : p.next;
-                    if (x == hx) return m; // hole touches outer segment; pick leftmost endpoint
+                    m = p.X < p.Next.X ? p : p.Next;
+                    if (x == hx)
+                    {
+                        return m;
+                    }
                 }
             }
-            p = p.next;
-        } while (p != outerNode);
 
-        if (m == null) return null;
+            p = p.Next!;
+        }
+        while (p != outerNode);
 
-        // look for points inside the triangle of hole point, segment intersection and endpoint;
-        // if there are no points found, we have a valid connection;
-        // otherwise choose the point of the minimum angle with the ray as connection point
+        if (m is null)
+        {
+            return null;
+        }
 
         Node stop = m;
-        double mx = m.x;
-        double my = m.y;
+        double mx = m.X;
+        double my = m.Y;
         double tanMin = double.PositiveInfinity;
-        double tan;
 
         p = m;
 
         do
         {
-            if (hx >= p!.x && p.x >= mx && hx != p.x &&
-                PointInTriangle(hx < mx ? hx : mx, hy, mx, my, hx < mx ? mx : hx, hy, p.x, p.y))
+            if (hx >= p.X && p.X >= mx && hx != p.X &&
+                PointInTriangle(
+                    hy < my ? hx : qx, hy,
+                    mx, my,
+                    hy < my ? qx : hx, hy,
+                    p.X, p.Y))
             {
-                tan = Math.Abs(hy - p.y) / (hx - p.x); // tangential
+                double tan = Math.Abs(hy - p.Y) / (hx - p.X);
 
                 if (LocallyInside(p, hole) &&
-                    (tan < tanMin || (tan == tanMin && (p.x > m.x || (p.x == m.x && SectorContainsSector(m, p))))))
+                    (tan < tanMin ||
+                     (tan == tanMin &&
+                      (p.X > m.X || (p.X == m.X && SectorContainsSector(m, p))))))
                 {
                     m = p;
                     tanMin = tan;
                 }
             }
 
-            p = p.next;
-        } while (p != stop);
+            p = p.Next!;
+        }
+        while (p != stop);
 
         return m;
     }
 
-    // whether sector in node m contains sector in node p in the same coordinates
-    private static bool SectorContainsSector(Node m, Node p)
-    {
-        return Area(m.prev, m, p.prev) < 0 && Area(p.next, m, m.next) < 0;
-    }
+    // ───────────────────── z-order spatial indexing ─────────────────────────
 
-    // interlink polygon nodes in z-order
-    private static void IndexCurve(Node start, double minX, double minY, double invSize)
+    /// <summary>Interlinks polygon nodes in z-order.</summary>
+    private static void IndexCurve(
+        Node start,
+        double minX,
+        double minY,
+        double invSize)
     {
-        Node? p = start;
+        Node p = start;
+
         do
         {
-            if (p!.z == 0) p.z = ZOrder((int)((p.x - minX) * invSize), (int)((p.y - minY) * invSize));
-            p.prevZ = p.prev;
-            p.nextZ = p.next;
-            p = p.next;
-        } while (p != start);
+            if (p.Z == 0)
+            {
+                p.Z = ZOrder(p.X, p.Y, minX, minY, invSize);
+            }
 
-        p.prevZ!.nextZ = null;
-        p.prevZ = null;
+            p.PrevZ = p.Prev;
+            p.NextZ = p.Next;
+            p = p.Next!;
+        }
+        while (p != start);
+
+        p.PrevZ!.NextZ = null;
+        p.PrevZ = null;
 
         SortLinked(p);
     }
 
-    // Simon Tatham's linked list merge sort algorithm
-    private static Node SortLinked(Node? list)
+    /// <summary>
+    /// Simon Tatham's linked-list merge sort.
+    /// <see href="http://www.chiark.greenend.org.uk/~sgtatham/algorithms/listsort.html"/>
+    /// </summary>
+    private static Node SortLinked(Node list)
     {
+        int numMerges;
         int inSize = 1;
-        Node? p, q, e, tail;
-        int numMerges, pSize, qSize, i;
 
         do
         {
-            p = list;
-            list = null;
-            tail = null;
+            Node? p = list;
+            list = null!;
+            Node? tail = null;
             numMerges = 0;
 
-            while (p != null)
+            while (p is not null)
             {
                 numMerges++;
-                q = p;
-                pSize = 0;
-                for (i = 0; i < inSize && q != null; i++)
+                Node? q = p;
+                int pSize = 0;
+
+                for (int i = 0; i < inSize; i++)
                 {
                     pSize++;
-                    q = q.nextZ;
-                }
-                qSize = inSize;
-
-                while (pSize > 0 || (qSize > 0 && q != null))
-                {
-                    if (pSize != 0 && (qSize == 0 || q == null || p!.z <= q.z))
+                    q = q!.NextZ;
+                    if (q is null)
                     {
-                        e = p;
-                        p = p!.nextZ;
+                        break;
+                    }
+                }
+
+                int qSize = inSize;
+
+                while (pSize > 0 || (qSize > 0 && q is not null))
+                {
+                    Node e;
+
+                    if (pSize != 0 &&
+                        (qSize == 0 || q is null || p!.Z <= q.Z))
+                    {
+                        e = p!;
+                        p = p!.NextZ;
                         pSize--;
                     }
                     else
                     {
-                        e = q;
-                        q = q!.nextZ;
+                        e = q!;
+                        q = q!.NextZ;
                         qSize--;
                     }
 
-                    if (tail != null) tail.nextZ = e;
-                    else list = e;
+                    if (tail is not null)
+                    {
+                        tail.NextZ = e;
+                    }
+                    else
+                    {
+                        list = e;
+                    }
 
-                    e!.prevZ = tail;
+                    e.PrevZ = tail;
                     tail = e;
                 }
 
                 p = q;
             }
 
-            tail!.nextZ = null;
+            tail!.NextZ = null;
             inSize *= 2;
+        }
+        while (numMerges > 1);
 
-        } while (numMerges > 1);
-
-        return list!;
+        return list;
     }
 
-    // z-order of a point given coords and inverse of the longer side of data bbox
-    private static int ZOrder(int x, int y)
+    /// <summary>
+    /// Computes the z-order (Morton code) of a point.
+    /// Coords are mapped to a 15-bit unsigned integer range before
+    /// bit-interleaving.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int ZOrder(
+        double x, double y,
+        double minX, double minY,
+        double invSize)
     {
-        x = (x | (x << 8)) & 0x00FF00FF;
-        x = (x | (x << 4)) & 0x0F0F0F0F;
-        x = (x | (x << 2)) & 0x33333333;
-        x = (x | (x << 1)) & 0x55555555;
+        int ix = (int)((x - minX) * invSize);
+        int iy = (int)((y - minY) * invSize);
 
-        y = (y | (y << 8)) & 0x00FF00FF;
-        y = (y | (y << 4)) & 0x0F0F0F0F;
-        y = (y | (y << 2)) & 0x33333333;
-        y = (y | (y << 1)) & 0x55555555;
+        ix = (ix | (ix << 8)) & 0x00FF00FF;
+        ix = (ix | (ix << 4)) & 0x0F0F0F0F;
+        ix = (ix | (ix << 2)) & 0x33333333;
+        ix = (ix | (ix << 1)) & 0x55555555;
 
-        return x | (y << 1);
+        iy = (iy | (iy << 8)) & 0x00FF00FF;
+        iy = (iy | (iy << 4)) & 0x0F0F0F0F;
+        iy = (iy | (iy << 2)) & 0x33333333;
+        iy = (iy | (iy << 1)) & 0x55555555;
+
+        return ix | (iy << 1);
     }
 
-    // find the leftmost node of a polygon ring
-    private static Node GetLeftmost(Node start)
-    {
-        Node? p = start;
-        Node leftmost = start;
+    // ──────────────────────── geometry predicates ──────────────────────────
 
-        do
+    /// <summary>Signed area of triangle (p → q → r).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double Area(Node p, Node q, Node r) =>
+        (q.Y - p.Y) * (r.X - q.X) - (q.X - p.X) * (r.Y - q.Y);
+
+    /// <summary>Coordinate equality (not reference equality).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool CoordsEqual(Node a, Node b) =>
+        a.X == b.X && a.Y == b.Y;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool PointInTriangle(
+        double ax, double ay,
+        double bx, double by,
+        double cx, double cy,
+        double px, double py) =>
+        (cx - px) * (ay - py) >= (ax - px) * (cy - py) &&
+        (ax - px) * (by - py) >= (bx - px) * (ay - py) &&
+        (bx - px) * (cy - py) >= (cx - px) * (by - py);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool PointInTriangleExceptFirst(
+        double ax, double ay,
+        double bx, double by,
+        double cx, double cy,
+        double px, double py) =>
+        !(ax == px && ay == py) &&
+        PointInTriangle(ax, ay, bx, by, cx, cy, px, py);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool SectorContainsSector(Node m, Node p) =>
+        Area(m.Prev!, m, p.Prev!) < 0.0 && Area(p.Next!, m, m.Next!) < 0.0;
+
+    private static bool IsValidDiagonal(Node a, Node b) =>
+        a.Next!.I != b.I &&
+        a.Prev!.I != b.I &&
+        !IntersectsPolygon(a, b) &&
+        (LocallyInside(a, b) && LocallyInside(b, a) && MiddleInside(a, b) &&
+         (Area(a.Prev, a, b.Prev!) != 0.0 || Area(a, b.Prev!, b) != 0.0) ||
+         CoordsEqual(a, b) &&
+         Area(a.Prev, a, a.Next) > 0.0 &&
+         Area(b.Prev!, b, b.Next!) > 0.0);
+
+    private static bool Intersects(Node p1, Node q1, Node p2, Node q2)
+    {
+        int o1 = Math.Sign(Area(p1, q1, p2));
+        int o2 = Math.Sign(Area(p1, q1, q2));
+        int o3 = Math.Sign(Area(p2, q2, p1));
+        int o4 = Math.Sign(Area(p2, q2, q1));
+
+        if (o1 != o2 && o3 != o4)
         {
-            if (p!.x < leftmost.x || (p.x == leftmost.x && p.y < leftmost.y)) leftmost = p;
-            p = p.next;
-        } while (p != start);
+            return true;
+        }
 
-        return leftmost;
-    }
+        if (o1 == 0 && OnSegment(p1, p2, q1))
+        {
+            return true;
+        }
 
-    // check if a point lies within a convex triangle
-    private static bool PointInTriangle(double ax, double ay, double bx, double by, double cx, double cy, double px, double py)
-    {
-        return (cx - px) * (ay - py) >= (ax - px) * (cy - py) &&
-               (ax - px) * (by - py) >= (bx - px) * (ay - py) &&
-               (bx - px) * (cy - py) >= (cx - px) * (by - py);
-    }
+        if (o2 == 0 && OnSegment(p1, q2, q1))
+        {
+            return true;
+        }
 
-    // check if a diagonal between two polygon nodes is valid (lies in polygon interior)
-    private static bool IsValidDiagonal(Node a, Node b)
-    {
-        return a.next!.i != b.i && a.prev!.i != b.i && !IntersectsPolygon(a, b) && // doesn't intersect other edges
-               (LocallyInside(a, b) && LocallyInside(b, a) && MiddleInside(a, b) && // locally visible
-                (Area(a.prev, a, b.prev) != 0 || Area(a, b.prev, b) != 0) || // does not create opposite-facing sectors
-                Equals(a, b) && Area(a.prev, a, a.next) > 0 && Area(b.prev, b, b.next) > 0); // special zero-length case
-    }
+        if (o3 == 0 && OnSegment(p2, p1, q2))
+        {
+            return true;
+        }
 
-    // signed area of a triangle
-    private static double Area(Node? p, Node? q, Node? r)
-    {
-        return (q!.y - p!.y) * (r!.x - q.x) - (q.x - p.x) * (r.y - q.y);
-    }
-
-    // check if two points are equal
-    private static bool Equals(Node? p1, Node? p2)
-    {
-        return p1!.x == p2!.x && p1.y == p2.y;
-    }
-
-    // check if two segments intersect
-    private static bool Intersects(Node p1, Node? q1, Node? p2, Node q2)
-    {
-        int o1 = Sign(Area(p1, q1, p2));
-        int o2 = Sign(Area(p1, q1, q2));
-        int o3 = Sign(Area(p2, q2, p1));
-        int o4 = Sign(Area(p2, q2, q1));
-
-        if (o1 != o2 && o3 != o4) return true; // general case
-
-        if (o1 == 0 && OnSegment(p1, p2!, q1!)) return true; // p1, q1 and p2 are collinear and p2 lies on p1q1
-        if (o2 == 0 && OnSegment(p1, q2, q1!)) return true; // p1, q1 and q2 are collinear and q2 lies on p1q1
-        if (o3 == 0 && OnSegment(p2!, p1, q2)) return true; // p2, q2 and p1 are collinear and p1 lies on p2q2
-        if (o4 == 0 && OnSegment(p2!, q1!, q2)) return true; // p2, q2 and q1 are collinear and q1 lies on p2q2
+        if (o4 == 0 && OnSegment(p2, q1, q2))
+        {
+            return true;
+        }
 
         return false;
     }
 
-    // for collinear points p, q, r, check if point q lies on segment pr
-    private static bool OnSegment(Node p, Node q, Node r)
-    {
-        return q.x <= Math.Max(p.x, r.x) && q.x >= Math.Min(p.x, r.x) &&
-               q.y <= Math.Max(p.y, r.y) && q.y >= Math.Min(p.y, r.y);
-    }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool OnSegment(Node p, Node q, Node r) =>
+        q.X <= Math.Max(p.X, r.X) && q.X >= Math.Min(p.X, r.X) &&
+        q.Y <= Math.Max(p.Y, r.Y) && q.Y >= Math.Min(p.Y, r.Y);
 
-    private static int Sign(double val)
-    {
-        return val > 0 ? 1 : val < 0 ? -1 : 0;
-    }
-
-    // check if a polygon diagonal intersects with any existing edges
     private static bool IntersectsPolygon(Node a, Node b)
     {
-        Node? p = a;
+        ArgumentNullException.ThrowIfNull(a);
+        ArgumentNullException.ThrowIfNull(b);
+        Node p = a;
+
         do
         {
-            if (p!.i != a.i && p.next!.i != a.i && p.i != b.i && p.next.i != b.i &&
-                Intersects(p, p.next, a, b)) return true;
-            p = p.next;
-        } while (p != a);
+            if (p.I != a.I && p.Next!.I != a.I &&
+                p.I != b.I && p.Next.I != b.I &&
+                Intersects(p, p.Next, a, b))
+            {
+                return true;
+            }
+
+            p = p.Next;
+        }
+        while (p != a);
 
         return false;
     }
 
-    // check if a polygon diagonal is locally inside the polygon
-    private static bool LocallyInside(Node a, Node b)
-    {
-        return Area(a.prev, a, a.next) < 0 ?
-            Area(a, b, a.next) >= 0 && Area(a, a.prev, b) >= 0 :
-            Area(a, b, a.prev) < 0 || Area(a, a.next, b) < 0;
-    }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool LocallyInside(Node a, Node b) =>
+        Area(a.Prev!, a, a.Next!) < 0.0
+            ? Area(a, b, a.Next!) >= 0.0 && Area(a, a.Prev!, b) >= 0.0
+            : Area(a, b, a.Prev!) < 0.0 || Area(a, a.Next!, b) < 0.0;
 
-    // check if the middle point of a polygon diagonal is inside the polygon
     private static bool MiddleInside(Node a, Node b)
     {
-        Node? p = a;
+        Node p = a;
         bool inside = false;
-        double px = (a.x + b.x) / 2;
-        double py = (a.y + b.y) / 2;
+        double px = (a.X + b.X) * 0.5;
+        double py = (a.Y + b.Y) * 0.5;
 
         do
         {
-            double sx = p!.x;
-            double sy = p.y;
-            double ex = p.next!.x;
-            double ey = p.next.y;
+            if (((p.Y > py) != (p.Next!.Y > py)) &&
+                p.Next.Y != p.Y &&
+                px < (p.Next.X - p.X) * (py - p.Y) / (p.Next.Y - p.Y) + p.X)
+            {
+                inside = !inside;
+            }
 
-            if (((sy > py) != (ey > py)) && (px < (ex - sx) * (py - sy) / (ey - sy) + sx)) inside = !inside;
-            p = p.next;
-        } while (p != a);
+            p = p.Next;
+        }
+        while (p != a);
 
         return inside;
     }
 
-    // link two polygon vertices with a bridge
-    private static Node? SplitPolygon(Node a, Node b)
+    private static Node GetLeftmost(Node start)
     {
-        Node a2 = new Node(a.i, a.x, a.y);
-        Node b2 = new Node(b.i, b.x, b.y);
-        Node an = a.next!;
-        Node bp = b.prev!;
+        Node p = start;
+        Node leftmost = start;
 
-        a.next = b;
-        b.prev = a;
+        do
+        {
+            if (p.X < leftmost.X ||
+                (p.X == leftmost.X && p.Y < leftmost.Y))
+            {
+                leftmost = p;
+            }
 
-        a2.next = an;
-        an.prev = a2;
+            p = p.Next!;
+        }
+        while (p != start);
 
-        b2.next = a2;
-        a2.prev = b2;
+        return leftmost;
+    }
 
-        bp.next = b2;
-        b2.prev = bp;
+    // ──────────────────── linked-list manipulation ─────────────────────────
+
+    private static Node SplitPolygon(Node a, Node b)
+    {
+        var a2 = new Node(a.I, a.X, a.Y);
+        var b2 = new Node(b.I, b.X, b.Y);
+        Node an = a.Next!;
+        Node bp = b.Prev!;
+
+        a.Next = b;
+        b.Prev = a;
+
+        a2.Next = an;
+        an.Prev = a2;
+
+        b2.Next = a2;
+        a2.Prev = b2;
+
+        bp.Next = b2;
+        b2.Prev = bp;
 
         return b2;
     }
 
-    // create a node and optionally link it with a previous one (in a circular doubly linked list)
     private static Node InsertNode(int i, double x, double y, Node? last)
     {
-        Node p = new Node(i, x, y);
+        var p = new Node(i, x, y);
 
-        if (last == null)
+        if (last is null)
         {
-            p.prev = p;
-            p.next = p;
+            p.Prev = p;
+            p.Next = p;
         }
         else
         {
-            p.next = last.next;
-            p.prev = last;
-            last.next!.prev = p;
-            last.next = p;
+            p.Next = last.Next;
+            p.Prev = last;
+            last.Next!.Prev = p;
+            last.Next = p;
         }
+
         return p;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void RemoveNode(Node p)
     {
-        p.next!.prev = p.prev;
-        p.prev!.next = p.next;
+        p.Next!.Prev = p.Prev;
+        p.Prev!.Next = p.Next;
 
-        if (p.prevZ != null) p.prevZ.nextZ = p.nextZ;
-        if (p.nextZ != null) p.nextZ.prevZ = p.prevZ;
+        if (p.PrevZ is not null)
+        {
+            p.PrevZ.NextZ = p.NextZ;
+        }
+
+        if (p.NextZ is not null)
+        {
+            p.NextZ.PrevZ = p.PrevZ;
+        }
     }
 
-    private static double SignedArea(ReadOnlySpan<double> data, int start, int end, int dim)
+    private static double SignedArea(
+        ReadOnlySpan<double> data,
+        int start,
+        int end,
+        int dim)
     {
-        double sum = 0;
-        int j = end - dim;
+        double sum = 0.0;
 
-        for (int i = start; i < end; i += dim)
+        for (int i = start, j = end - dim; i < end; i += dim)
         {
             sum += (data[j] - data[i]) * (data[i + 1] + data[j + 1]);
             j = i;
@@ -723,99 +1062,38 @@ public static class Earcut
         return sum;
     }
 
-    /// <summary>
-    /// Flattens a multi-dimensional array (e.g. GeoJSON Polygon) into a format expected by Earcut.
-    /// </summary>
-    /// <param name="data">Multi-dimensional array of polygons, where each polygon is an array of rings, and each ring is an array of [x, y] coordinates</param>
-    /// <returns>Flattened data with vertices, holes, and dimensions</returns>
-    public static (double[] vertices, int[] holes, int dimensions) Flatten(double[][][] data)
-    {
-        int dim = data[0][0].Length;
-        var vertices = new List<double>();
-        var holes = new List<int>();
-        int holeIndex = 0;
+    // ─────────────────────────── tiny helpers ──────────────────────────────
 
-        for (int i = 0; i < data.Length; i++)
-        {
-            for (int j = 0; j < data[i].Length; j++)
-            {
-                for (int d = 0; d < dim; d++)
-                {
-                    vertices.Add(data[i][j][d]);
-                }
-            }
-            if (i > 0)
-            {
-                holeIndex += data[i - 1].Length;
-                holes.Add(holeIndex);
-            }
-        }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double Min3(double a, double b, double c) =>
+        a < b
+            ? (a < c ? a : c)
+            : (b < c ? b : c);
 
-        return (vertices.ToArray(), holes.ToArray(), dim);
-    }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double Max3(double a, double b, double c) =>
+        a > b
+            ? (a > c ? a : c)
+            : (b > c ? b : c);
+
+    // ──────────────────────────── node type ────────────────────────────────
 
     /// <summary>
-    /// Returns the relative difference between the total area of triangles and the area of the input polygon.
+    /// Vertex node in the circular doubly-linked polygon ring.
     /// </summary>
-    /// <param name="data">Flat array of vertex coordinates</param>
-    /// <param name="holeIndices">Array of hole indices</param>
-    /// <param name="dim">Number of coordinates per vertex</param>
-    /// <param name="triangles">Array of triangle indices</param>
-    /// <returns>Deviation value where 0 means the triangulation is fully correct</returns>
-    public static double Deviation(ReadOnlySpan<double> data, ReadOnlySpan<int> holeIndices, int dim, ReadOnlySpan<int> triangles)
+    private sealed class Node(int i, double x, double y)
     {
-        bool hasHoles = holeIndices.Length > 0;
-        int outerLen = hasHoles ? holeIndices[0] * dim : data.Length;
+        public readonly int I = i;       // vertex index in the coordinate array
+        public readonly double X = x;    // X coordinate
+        public readonly double Y = y;    // Y coordinate
 
-        double polygonArea = Math.Abs(SignedArea(data, 0, outerLen, dim));
-        if (hasHoles)
-        {
-            for (int i = 0; i < holeIndices.Length; i++)
-            {
-                int start = holeIndices[i] * dim;
-                int end = i < holeIndices.Length - 1 ? holeIndices[i + 1] * dim : data.Length;
-                polygonArea -= Math.Abs(SignedArea(data, start, end, dim));
-            }
-        }
+        public Node? Prev;               // previous vertex in ring
+        public Node? Next;               // next vertex in ring
 
-        double trianglesArea = 0;
-        for (int i = 0; i < triangles.Length; i += 3)
-        {
-            int a = triangles[i] * dim;
-            int b = triangles[i + 1] * dim;
-            int c = triangles[i + 2] * dim;
-            trianglesArea += Math.Abs(
-                (data[a] - data[c]) * (data[b + 1] - data[a + 1]) -
-                (data[a] - data[b]) * (data[c + 1] - data[a + 1]));
-        }
+        public int Z;                    // z-order curve value
+        public Node? PrevZ;              // previous node in z-order
+        public Node? NextZ;              // next node in z-order
 
-        return polygonArea == 0 && trianglesArea == 0 ? 0 :
-            Math.Abs((trianglesArea - polygonArea) / polygonArea);
-    }
-
-    private class Node
-    {
-        public int i; // vertex index in original input array
-        public double x; // x coordinate
-        public double y; // y coordinate
-        public Node? prev; // previous vertex node in a polygon ring
-        public Node? next; // next vertex node in a polygon ring
-        public int z; // z-order curve value
-        public Node? prevZ; // previous vertex node in z-order
-        public Node? nextZ; // next vertex node in z-order
-        public bool steiner; // indicates whether this is a steiner point
-
-        public Node(int i, double x, double y)
-        {
-            this.i = i;
-            this.x = x;
-            this.y = y;
-            this.prev = null;
-            this.next = null;
-            this.z = 0;
-            this.prevZ = null;
-            this.nextZ = null;
-            this.steiner = false;
-        }
+        public bool Steiner;             // is this a Steiner point?
     }
 }

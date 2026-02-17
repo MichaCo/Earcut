@@ -1,5 +1,10 @@
-using BenchmarkDotNet.Attributes;
+// This is an automated Csharp port of https://github.com/mapbox/earcut.
+// Copyright 2026 Michael Conrad.
+// Licensed under the MIT License.
+// See LICENSE file for details.
+
 using System.Text.Json;
+using BenchmarkDotNet.Attributes;
 
 namespace Earcut.Benchmarks;
 
@@ -19,7 +24,7 @@ public class TriangulationBenchmarks
     public void Setup()
     {
         _square = [0, 0, 10, 0, 10, 10, 0, 10];
-        
+
         // Create a 100-vertex polygon
         var vertices = new List<double>();
         for (int i = 0; i < 100; i++)
@@ -32,10 +37,10 @@ public class TriangulationBenchmarks
 
         // Load dude fixture
         LoadFixture("dude", out _dudeVertices, out _dudeHoles);
-        
+
         // Load water fixture
         LoadFixture("water", out _waterVertices, out _waterHoles);
-        
+
         // Load water-huge fixture
         LoadFixture("water-huge", out _waterHugeVertices, out _waterHugeHoles);
     }
@@ -58,8 +63,8 @@ public class TriangulationBenchmarks
             if (coords != null)
             {
                 var data = Earcut.Flatten(coords);
-                vertices = data.vertices;
-                holes = data.holes;
+                vertices = data.Vertices;
+                holes = data.Holes;
             }
             else
             {

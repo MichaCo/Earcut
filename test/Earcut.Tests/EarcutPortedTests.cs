@@ -1,3 +1,8 @@
+// This is an automated Csharp port of https://github.com/mapbox/earcut.
+// Copyright 2026 Michael Conrad.
+// Licensed under the MIT License.
+// See LICENSE file for details.
+
 using System.Text.Json;
 using Xunit;
 
@@ -9,7 +14,7 @@ public class EarcutPortedTests
     {
         public Dictionary<string, int> Triangles { get; set; } = new();
         public Dictionary<string, double> Errors { get; set; } = new();
-        
+
         [System.Text.Json.Serialization.JsonPropertyName("errors-with-rotation")]
         public Dictionary<string, double> ErrorsWithRotation { get; set; } = new();
     }
@@ -39,7 +44,7 @@ public class EarcutPortedTests
             foreach (int rotation in rotations)
             {
                 double expectedDeviation = 0.0;
-                
+
                 // Determine expected deviation based on rotation
                 if (rotation != 0 && expected.ErrorsWithRotation.ContainsKey(fixtureName))
                 {
@@ -64,7 +69,7 @@ public class EarcutPortedTests
         // Load fixture
         var fixturePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "fixtures", $"{fixtureName}.json");
         Assert.True(File.Exists(fixturePath), $"Fixture file not found: {fixtureName}.json");
-        
+
         var coordsJson = File.ReadAllText(fixturePath);
         var coords = JsonSerializer.Deserialize<double[][][]>(coordsJson);
         Assert.NotNull(coords);
@@ -92,8 +97,8 @@ public class EarcutPortedTests
 
         // Flatten and triangulate
         var data = Earcut.Flatten(coords);
-        var indices = Earcut.Triangulate(data.vertices, data.holes, data.dimensions);
-        var err = Earcut.Deviation(data.vertices, data.holes, data.dimensions, indices);
+        var indices = Earcut.Triangulate(data.Vertices, data.Holes, data.Dimensions);
+        var err = Earcut.Deviation(data.Vertices, data.Holes, data.Dimensions, indices);
 
         int numTriangles = indices.Length / 3;
 
@@ -106,7 +111,7 @@ public class EarcutPortedTests
         // Validate deviation
         if (expectedTriangles > 0)
         {
-            Assert.True(err <= expectedDeviation, 
+            Assert.True(err <= expectedDeviation,
                 $"Fixture {fixtureName} rotation {rotation}: deviation {err} > expected {expectedDeviation}");
         }
     }

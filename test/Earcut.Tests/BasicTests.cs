@@ -1,3 +1,8 @@
+// This is an automated Csharp port of https://github.com/mapbox/earcut.
+// Copyright 2026 Michael Conrad.
+// Licensed under the MIT License.
+// See LICENSE file for details.
+
 using Xunit;
 
 namespace Earcut.Tests;
