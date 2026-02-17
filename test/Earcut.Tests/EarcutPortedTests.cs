@@ -25,10 +25,11 @@ public class EarcutPortedTests
         return JsonSerializer.Deserialize<ExpectedResults>(json, options) ?? new ExpectedResults();
     }
 
-    public static IEnumerable<object[]> GetFixtureTestData()
+    public static TheoryData<string, int, int, double> GetFixtureTestData()
     {
         var expected = LoadExpectedResults();
         var rotations = new[] { 0, 90, 180, 270 };
+        var theoryData = new TheoryData<string, int, int, double>();
 
         foreach (var kvp in expected.Triangles)
         {
@@ -49,9 +50,11 @@ public class EarcutPortedTests
                     expectedDeviation = expected.Errors[fixtureName];
                 }
 
-                yield return new object[] { fixtureName, rotation, expectedTriangles, expectedDeviation };
+                theoryData.Add(fixtureName, rotation, expectedTriangles, expectedDeviation);
             }
         }
+
+        return theoryData;
     }
 
     [Theory]
