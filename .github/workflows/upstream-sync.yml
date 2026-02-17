@@ -30,9 +30,9 @@ jobs:
       - name: Get latest upstream commit
         id: upstream
         run: |
+          # mapbox/earcut is a public repo — no auth token required
           RESPONSE=$(curl -sf "https://api.github.com/repos/mapbox/earcut/commits/main" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}")
+            -H "Accept: application/vnd.github+json")
           if [ $? -ne 0 ] || [ -z "$RESPONSE" ]; then
             echo "::error::Failed to fetch upstream commit from GitHub API"
             exit 1
@@ -58,18 +58,17 @@ jobs:
             echo "Upstream has new commits since $LAST (latest: $LATEST)."
           fi
 
-      - name: Fetch upstream diff
+      - name: Fetch upstream diff summary
         if: steps.check.outputs.needed == 'true'
         id: diff
         run: |
           LAST="${{ steps.last-sync.outputs.sha }}"
           LATEST="${{ steps.upstream.outputs.sha }}"
 
-          # Fetch the compare diff from GitHub API
+          # Fetch the compare diff from GitHub API (public repo — no auth needed)
           DIFF=$(curl -sf \
             "https://api.github.com/repos/mapbox/earcut/compare/${LAST}...${LATEST}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}")
+            -H "Accept: application/vnd.github+json")
           if [ $? -ne 0 ] || [ -z "$DIFF" ]; then
             echo "::warning::Failed to fetch upstream diff; the PR will be created but the commit list in the PR body will be empty"
             DIFF="{}"
@@ -93,16 +92,18 @@ jobs:
           echo "$COMMITS" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
-          # Fetch the current upstream JS source
-          curl -sf \
-            "https://raw.githubusercontent.com/mapbox/earcut/${LATEST}/src/earcut.js" \
-            -o /tmp/earcut-upstream.js
-          if [ $? -ne 0 ]; then
-            echo "::error::Failed to fetch upstream earcut.js"
-            exit 1
-          fi
+      - name: Clone upstream repository at new commit
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          LATEST="${{ steps.upstream.outputs.sha }}"
 
-          echo "Fetched upstream earcut.js ($(wc -l < /tmp/earcut-upstream.js) lines)"
+          # Shallow-clone the tip of main (which IS $LATEST, confirmed above)
+          # from the public upstream repo — no auth required
+          git clone --depth 1 https://github.com/mapbox/earcut.git /tmp/earcut-upstream
+
+          echo "Cloned upstream at $LATEST"
+          echo "Upstream files:"
+          find /tmp/earcut-upstream -not -path '/tmp/earcut-upstream/.git/*' -type f | sort
 
       - name: Create sync branch and PR
         if: steps.check.outputs.needed == 'true'
@@ -123,11 +124,13 @@ jobs:
           # Update the .last-sync-commit file
           echo "$LATEST" > .last-sync-commit
 
-          # Copy upstream JS source for reference
+          # Mirror ALL upstream source files into .upstream/ so reviewers and
+          # Copilot can see every changed file side-by-side with the C# port
+          rm -rf .upstream
           mkdir -p .upstream
-          cp /tmp/earcut-upstream.js .upstream/earcut.js
+          rsync -a --exclude='.git' /tmp/earcut-upstream/ .upstream/
 
-          git add .last-sync-commit .upstream/earcut.js
+          git add .last-sync-commit .upstream/
           git commit -m "chore: update upstream sync to ${LATEST:0:7}
 
 Upstream commits since ${LAST:0:7}:
@@ -159,12 +162,13 @@ ${{ steps.diff.outputs.COMMITS }}
 
 ### What to do
 
-1. Review the upstream diff: https://github.com/mapbox/earcut/compare/${LAST}...${LATEST}
-2. The updated \`src/earcut.js\` has been placed in \`.upstream/earcut.js\` for reference.
-3. Port any algorithm changes from \`.upstream/earcut.js\` to \`src/Earcut/Earcut.cs\` using the [PORTING_GUIDE.md](PORTING_GUIDE.md).
-4. If new test fixtures were added upstream, add them to \`test/Earcut.Tests/fixtures/\` and update \`test/Earcut.Tests/expected.json\`.
-5. Run \`dotnet test\` and ensure all tests pass.
-6. Update \`PORTING_GUIDE.md\` if new language patterns were introduced.
+The complete upstream repository at the new commit has been mirrored into \`.upstream/\` so you can diff every changed file side-by-side:
+
+1. Review the full upstream diff: https://github.com/mapbox/earcut/compare/${LAST}...${LATEST}
+2. Port algorithm changes from \`.upstream/src/earcut.js\` to \`src/Earcut/Earcut.cs\` using [PORTING_GUIDE.md](PORTING_GUIDE.md).
+3. If test fixtures were added/changed in \`.upstream/test/fixtures/\`, copy them to \`test/Earcut.Tests/fixtures/\` and update \`test/Earcut.Tests/expected.json\`.
+4. Run \`dotnet test\` and ensure all tests pass.
+5. Update \`PORTING_GUIDE.md\` if new language patterns were introduced.
 
 > [!NOTE]
 > GitHub Copilot coding agent can be invoked on this PR to assist with porting the JS changes to C#." \
