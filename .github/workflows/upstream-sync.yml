@@ -1,0 +1,174 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-upstream:
+    name: Check for upstream changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get last synced commit
+        id: last-sync
+        run: |
+          LAST_SYNC=$(cat .last-sync-commit | tr -d '[:space:]')
+          echo "sha=$LAST_SYNC" >> "$GITHUB_OUTPUT"
+          echo "Last synced upstream commit: $LAST_SYNC"
+
+      - name: Get latest upstream commit
+        id: upstream
+        run: |
+          RESPONSE=$(curl -sf "https://api.github.com/repos/mapbox/earcut/commits/main" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}")
+          if [ $? -ne 0 ] || [ -z "$RESPONSE" ]; then
+            echo "::error::Failed to fetch upstream commit from GitHub API"
+            exit 1
+          fi
+          LATEST=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['sha'])")
+          if [ -z "$LATEST" ]; then
+            echo "::error::Could not parse latest upstream commit SHA"
+            exit 1
+          fi
+          echo "sha=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream commit: $LATEST"
+
+      - name: Check if sync is needed
+        id: check
+        run: |
+          LAST="${{ steps.last-sync.outputs.sha }}"
+          LATEST="${{ steps.upstream.outputs.sha }}"
+          if [ "$LAST" = "$LATEST" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date with upstream ($LATEST)."
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream has new commits since $LAST (latest: $LATEST)."
+          fi
+
+      - name: Fetch upstream diff
+        if: steps.check.outputs.needed == 'true'
+        id: diff
+        run: |
+          LAST="${{ steps.last-sync.outputs.sha }}"
+          LATEST="${{ steps.upstream.outputs.sha }}"
+
+          # Fetch the compare diff from GitHub API
+          DIFF=$(curl -sf \
+            "https://api.github.com/repos/mapbox/earcut/compare/${LAST}...${LATEST}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}")
+          if [ $? -ne 0 ] || [ -z "$DIFF" ]; then
+            echo "::warning::Failed to fetch upstream diff; the PR will be created but the commit list in the PR body will be empty"
+            DIFF="{}"
+          fi
+
+          # Extract commit messages for PR body
+          COMMITS=$(echo "$DIFF" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          commits = d.get('commits', [])
+          lines = []
+          for c in commits:
+              sha = c['sha'][:7]
+              msg = c['commit']['message'].split('\n')[0]
+              url = c['html_url']
+              lines.append(f'- [{sha}]({url}) {msg}')
+          print('\n'.join(lines) if lines else '- (no commits found)')
+          " 2>/dev/null || echo "- (could not parse commits)")
+
+          echo "COMMITS<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$COMMITS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          # Fetch the current upstream JS source
+          curl -sf \
+            "https://raw.githubusercontent.com/mapbox/earcut/${LATEST}/src/earcut.js" \
+            -o /tmp/earcut-upstream.js
+          if [ $? -ne 0 ]; then
+            echo "::error::Failed to fetch upstream earcut.js"
+            exit 1
+          fi
+
+          echo "Fetched upstream earcut.js ($(wc -l < /tmp/earcut-upstream.js) lines)"
+
+      - name: Create sync branch and PR
+        if: steps.check.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LAST="${{ steps.last-sync.outputs.sha }}"
+          LATEST="${{ steps.upstream.outputs.sha }}"
+          BRANCH="auto-sync/upstream-${LATEST:0:7}"
+          DATE=$(date -u +"%Y-%m-%d")
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create a new branch from main
+          git checkout -b "$BRANCH"
+
+          # Update the .last-sync-commit file
+          echo "$LATEST" > .last-sync-commit
+
+          # Copy upstream JS source for reference
+          mkdir -p .upstream
+          cp /tmp/earcut-upstream.js .upstream/earcut.js
+
+          git add .last-sync-commit .upstream/earcut.js
+          git commit -m "chore: update upstream sync to ${LATEST:0:7}
+
+Upstream commits since ${LAST:0:7}:
+${{ steps.diff.outputs.COMMITS }}"
+
+          git push origin "$BRANCH"
+
+          # Ensure the auto-sync label exists
+          gh label create "auto-sync" \
+            --description "Automatically generated upstream sync PR" \
+            --color "0075ca" \
+            --repo "${{ github.repository }}" 2>/dev/null || true
+
+          # Create the pull request
+          gh pr create \
+            --title "chore: sync upstream earcut changes (${LATEST:0:7}) — ${DATE}" \
+            --body "## Upstream Sync
+
+This PR was automatically generated by the [Upstream Sync workflow](.github/workflows/upstream-sync.yml).
+
+**Upstream repository:** https://github.com/mapbox/earcut  
+**Previous synced commit:** [\`${LAST:0:7}\`](https://github.com/mapbox/earcut/commit/${LAST})  
+**New upstream commit:** [\`${LATEST:0:7}\`](https://github.com/mapbox/earcut/commit/${LATEST})  
+**Compare:** https://github.com/mapbox/earcut/compare/${LAST}...${LATEST}
+
+### Upstream commits included
+
+${{ steps.diff.outputs.COMMITS }}
+
+### What to do
+
+1. Review the upstream diff: https://github.com/mapbox/earcut/compare/${LAST}...${LATEST}
+2. The updated \`src/earcut.js\` has been placed in \`.upstream/earcut.js\` for reference.
+3. Port any algorithm changes from \`.upstream/earcut.js\` to \`src/Earcut/Earcut.cs\` using the [PORTING_GUIDE.md](PORTING_GUIDE.md).
+4. If new test fixtures were added upstream, add them to \`test/Earcut.Tests/fixtures/\` and update \`test/Earcut.Tests/expected.json\`.
+5. Run \`dotnet test\` and ensure all tests pass.
+6. Update \`PORTING_GUIDE.md\` if new language patterns were introduced.
+
+> [!NOTE]
+> GitHub Copilot coding agent can be invoked on this PR to assist with porting the JS changes to C#." \
+            --label "auto-sync" \
+            --base main \
+            --head "$BRANCH" \
+            --repo "${{ github.repository }}"
