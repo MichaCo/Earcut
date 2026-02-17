@@ -4,6 +4,7 @@
 // See LICENSE file for details.
 
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 [module: SkipLocalsInit]
 namespace Earcut;
@@ -175,6 +176,50 @@ public static class Earcut
         return (vertices, holes, dimensions);
     }
 
+    /// <summary>
+    /// Converts a multi-dimensional coordinate array (e.g. GeoJSON rings)
+    /// into the flat form that <see cref="Triangulate"/> expects,
+    /// writing results into caller-provided spans to avoid heap allocation.
+    /// </summary>
+    /// <param name="data">Multi-dimensional coordinate array.</param>
+    /// <param name="vertices">
+    /// Destination for flattened coordinates. Must have length ≥
+    /// <c>sum(ring.Length for ring in data) * data[0][0].Length</c>.
+    /// Use <see cref="Flatten(double[][][])"/> to obtain the exact size when unknown.
+    /// </param>
+    /// <param name="holes">
+    /// Destination for hole starting indices (expressed in vertex counts, not
+    /// coordinate counts). Must have length ≥ <c>data.Length - 1</c>.
+    /// </param>
+    /// <returns>The number of coordinates per vertex (dimensions).</returns>
+    public static int Flatten(double[][][] data, Span<double> vertices, Span<int> holes)
+    {
+        int dimensions = data[0][0].Length;
+        int vertexIndex = 0;
+        int holeCount = 0;
+        int holeIndex = 0;
+        int prevLen = 0;
+
+        foreach (double[][] ring in data)
+        {
+            foreach (double[] point in ring)
+            {
+                point.AsSpan(0, dimensions).CopyTo(vertices.Slice(vertexIndex, dimensions));
+                vertexIndex += dimensions;
+            }
+
+            if (prevLen > 0)
+            {
+                holeIndex += prevLen;
+                holes[holeCount++] = holeIndex;
+            }
+
+            prevLen = ring.Length;
+        }
+
+        return dimensions;
+    }
+
     // ──────────────────────── linked-list helpers ───────────────────────────
 
     /// <summary>
@@ -288,9 +333,12 @@ public static class Earcut
                 : IsEar(ear))
             {
                 // Emit triangle.
-                triangles.Add(prev.I);
-                triangles.Add(ear.I);
-                triangles.Add(next.I);
+                int count = triangles.Count;
+                CollectionsMarshal.SetCount(triangles, count + 3);
+                Span<int> triSpan = CollectionsMarshal.AsSpan(triangles);
+                triSpan[count]     = prev.I;
+                triSpan[count + 1] = ear.I;
+                triSpan[count + 2] = next.I;
 
                 RemoveNode(ear);
 
@@ -330,7 +378,7 @@ public static class Earcut
     }
 
     /// <summary>Checks whether a polygon node forms a valid ear.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static bool IsEar(Node ear)
     {
         Node a = ear.Prev!;
@@ -474,9 +522,12 @@ public static class Earcut
                 LocallyInside(a, b) &&
                 LocallyInside(b, a))
             {
-                triangles.Add(a.I);
-                triangles.Add(p.I);
-                triangles.Add(b.I);
+                int count = triangles.Count;
+                CollectionsMarshal.SetCount(triangles, count + 3);
+                Span<int> triSpan = CollectionsMarshal.AsSpan(triangles);
+                triSpan[count]     = a.I;
+                triSpan[count + 1] = p.I;
+                triSpan[count + 2] = b.I;
 
                 RemoveNode(p);
                 RemoveNode(p.Next!);
@@ -543,7 +594,8 @@ public static class Earcut
         Node outerNode,
         int dim)
     {
-        var queue = new List<Node>(holeIndices.Length);
+        Node?[] holeNodes = new Node?[holeIndices.Length];
+        int holeCount = 0;
 
         for (int i = 0; i < holeIndices.Length; i++)
         {
@@ -561,32 +613,27 @@ public static class Earcut
                     list.Steiner = true;
                 }
 
-                queue.Add(GetLeftmost(list));
+                holeNodes[holeCount++] = GetLeftmost(list);
             }
         }
 
-        queue.Sort(static (a, b) =>
+        // 64 indices × 4 bytes = 256 bytes on the stack, well within safe limits.
+        // Polygons with more than 64 holes are uncommon; they fall back to a heap array.
+        const int StackThreshold = 64;
+        Span<int> sortedIndices = holeCount <= StackThreshold
+            ? stackalloc int[holeCount]
+            : new int[holeCount];
+
+        for (int i = 0; i < holeCount; i++)
         {
-            int cmp = a.X.CompareTo(b.X);
-            if (cmp != 0)
-            {
-                return cmp;
-            }
+            sortedIndices[i] = i;
+        }
 
-            cmp = a.Y.CompareTo(b.Y);
-            if (cmp != 0)
-            {
-                return cmp;
-            }
+        sortedIndices.Sort(new HoleIndexComparer(holeNodes));
 
-            double aSlope = (a.Next!.Y - a.Y) / (a.Next.X - a.X);
-            double bSlope = (b.Next!.Y - b.Y) / (b.Next.X - b.X);
-            return aSlope.CompareTo(bSlope);
-        });
-
-        foreach (Node hole in queue)
+        for (int i = 0; i < holeCount; i++)
         {
-            outerNode = EliminateHole(hole, outerNode);
+            outerNode = EliminateHole(holeNodes[sortedIndices[i]]!, outerNode);
         }
 
         return outerNode;
@@ -806,20 +853,20 @@ public static class Earcut
         double minX, double minY,
         double invSize)
     {
-        int ix = (int)((x - minX) * invSize);
-        int iy = (int)((y - minY) * invSize);
+        uint ix = (uint)((x - minX) * invSize);
+        uint iy = (uint)((y - minY) * invSize);
 
-        ix = (ix | (ix << 8)) & 0x00FF00FF;
-        ix = (ix | (ix << 4)) & 0x0F0F0F0F;
-        ix = (ix | (ix << 2)) & 0x33333333;
-        ix = (ix | (ix << 1)) & 0x55555555;
+        ix = (ix | (ix << 8)) & 0x00FF00FFu;
+        ix = (ix | (ix << 4)) & 0x0F0F0F0Fu;
+        ix = (ix | (ix << 2)) & 0x33333333u;
+        ix = (ix | (ix << 1)) & 0x55555555u;
 
-        iy = (iy | (iy << 8)) & 0x00FF00FF;
-        iy = (iy | (iy << 4)) & 0x0F0F0F0F;
-        iy = (iy | (iy << 2)) & 0x33333333;
-        iy = (iy | (iy << 1)) & 0x55555555;
+        iy = (iy | (iy << 8)) & 0x00FF00FFu;
+        iy = (iy | (iy << 4)) & 0x0F0F0F0Fu;
+        iy = (iy | (iy << 2)) & 0x33333333u;
+        iy = (iy | (iy << 1)) & 0x55555555u;
 
-        return ix | (iy << 1);
+        return (int)(ix | (iy << 1));
     }
 
     // ──────────────────────── geometry predicates ──────────────────────────
@@ -867,6 +914,7 @@ public static class Earcut
          Area(a.Prev, a, a.Next) > 0.0 &&
          Area(b.Prev!, b, b.Next!) > 0.0);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool Intersects(Node p1, Node q1, Node p2, Node q2)
     {
         int o1 = Math.Sign(Area(p1, q1, p2));
@@ -874,32 +922,11 @@ public static class Earcut
         int o3 = Math.Sign(Area(p2, q2, p1));
         int o4 = Math.Sign(Area(p2, q2, q1));
 
-        if (o1 != o2 && o3 != o4)
-        {
-            return true;
-        }
-
-        if (o1 == 0 && OnSegment(p1, p2, q1))
-        {
-            return true;
-        }
-
-        if (o2 == 0 && OnSegment(p1, q2, q1))
-        {
-            return true;
-        }
-
-        if (o3 == 0 && OnSegment(p2, p1, q2))
-        {
-            return true;
-        }
-
-        if (o4 == 0 && OnSegment(p2, q1, q2))
-        {
-            return true;
-        }
-
-        return false;
+        return (o1 != o2 && o3 != o4) ||
+               (o1 == 0 && OnSegment(p1, p2, q1)) ||
+               (o2 == 0 && OnSegment(p1, q2, q1)) ||
+               (o3 == 0 && OnSegment(p2, p1, q2)) ||
+               (o4 == 0 && OnSegment(p2, q1, q2));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -909,8 +936,6 @@ public static class Earcut
 
     private static bool IntersectsPolygon(Node a, Node b)
     {
-        ArgumentNullException.ThrowIfNull(a);
-        ArgumentNullException.ThrowIfNull(b);
         Node p = a;
 
         do
@@ -1094,5 +1119,34 @@ public static class Earcut
         public Node? NextZ { get; set; }    // next node in z-order
 
         public bool Steiner { get; set; }   // is this a Steiner point?
+    }
+
+    /// <summary>
+    /// Compares hole nodes by their leftmost-point position for sort ordering.
+    /// Used with a stack-allocated index buffer to avoid heap allocation.
+    /// </summary>
+    private readonly struct HoleIndexComparer(Node?[] nodes) : IComparer<int>
+    {
+        public int Compare(int a, int b)
+        {
+            Node na = nodes[a]!;
+            Node nb = nodes[b]!;
+
+            int cmp = na.X.CompareTo(nb.X);
+            if (cmp != 0)
+            {
+                return cmp;
+            }
+
+            cmp = na.Y.CompareTo(nb.Y);
+            if (cmp != 0)
+            {
+                return cmp;
+            }
+
+            double aSlope = (na.Next!.Y - na.Y) / (na.Next.X - na.X);
+            double bSlope = (nb.Next!.Y - nb.Y) / (nb.Next.X - nb.X);
+            return aSlope.CompareTo(bSlope);
+        }
     }
 }
