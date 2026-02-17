@@ -4,6 +4,10 @@
 // See LICENSE file for details.
 
 using System.Runtime.CompilerServices;
+using System.Numerics;
+using System.Buffers;
+
+[module: SkipLocalsInit]
 
 namespace Earcut;
 
@@ -60,29 +64,15 @@ public static class Earcut
             double maxX = minX;
             double maxY = minY;
 
+            // Scalar loop with Math.Min/Max intrinsics
             for (int i = dim; i < outerLen; i += dim)
             {
                 double x = data[i];
                 double y = data[i + 1];
-                if (x < minX)
-                {
-                    minX = x;
-                }
-
-                if (y < minY)
-                {
-                    minY = y;
-                }
-
-                if (x > maxX)
-                {
-                    maxX = x;
-                }
-
-                if (y > maxY)
-                {
-                    maxY = y;
-                }
+                minX = Math.Min(minX, x);
+                minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x);
+                maxY = Math.Max(maxY, y);
             }
 
             invSize = Math.Max(maxX - minX, maxY - minY);
@@ -549,53 +539,65 @@ public static class Earcut
         Node outerNode,
         int dim)
     {
-        var queue = new List<Node>(holeIndices.Length);
+        int holeCount = holeIndices.Length;
+        
+        // Use ArrayPool for the queue
+        Node[] queue = ArrayPool<Node>.Shared.Rent(holeCount);
 
-        for (int i = 0; i < holeIndices.Length; i++)
+        try
         {
-            int start = holeIndices[i] * dim;
-            int end = i < holeIndices.Length - 1
-                ? holeIndices[i + 1] * dim
-                : data.Length;
-
-            Node? list = BuildLinkedList(data, start, end, dim, clockwise: false);
-
-            if (list is not null)
+            int queueSize = 0;
+            for (int i = 0; i < holeIndices.Length; i++)
             {
-                if (list == list.Next)
+                int start = holeIndices[i] * dim;
+                int end = i < holeIndices.Length - 1
+                    ? holeIndices[i + 1] * dim
+                    : data.Length;
+
+                Node? list = BuildLinkedList(data, start, end, dim, clockwise: false);
+
+                if (list is not null)
                 {
-                    list.Steiner = true;
+                    if (list == list.Next)
+                    {
+                        list.Steiner = true;
+                    }
+
+                    queue[queueSize++] = GetLeftmost(list);
+                }
+            }
+
+            // Sort only the valid portion
+            Array.Sort(queue, 0, queueSize, Comparer<Node>.Create(static (a, b) =>
+            {
+                int cmp = a.X.CompareTo(b.X);
+                if (cmp != 0)
+                {
+                    return cmp;
                 }
 
-                queue.Add(GetLeftmost(list));
-            }
-        }
+                cmp = a.Y.CompareTo(b.Y);
+                if (cmp != 0)
+                {
+                    return cmp;
+                }
 
-        queue.Sort(static (a, b) =>
-        {
-            int cmp = a.X.CompareTo(b.X);
-            if (cmp != 0)
+                double aSlope = (a.Next!.Y - a.Y) / (a.Next.X - a.X);
+                double bSlope = (b.Next!.Y - b.Y) / (b.Next.X - b.X);
+                return aSlope.CompareTo(bSlope);
+            }));
+
+            for (int i = 0; i < queueSize; i++)
             {
-                return cmp;
+                outerNode = EliminateHole(queue[i], outerNode);
             }
 
-            cmp = a.Y.CompareTo(b.Y);
-            if (cmp != 0)
-            {
-                return cmp;
-            }
-
-            double aSlope = (a.Next!.Y - a.Y) / (a.Next.X - a.X);
-            double bSlope = (b.Next!.Y - b.Y) / (b.Next.X - b.X);
-            return aSlope.CompareTo(bSlope);
-        });
-
-        foreach (Node hole in queue)
-        {
-            outerNode = EliminateHole(hole, outerNode);
+            return outerNode;
         }
-
-        return outerNode;
+        finally
+        {
+            ArrayPool<Node>.Shared.Return(queue, clearArray: true);
+        }
     }
 
     private static Node EliminateHole(Node hole, Node outerNode)
