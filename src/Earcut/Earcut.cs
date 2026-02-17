@@ -176,50 +176,6 @@ public static class Earcut
         return (vertices, holes, dimensions);
     }
 
-    /// <summary>
-    /// Converts a multi-dimensional coordinate array (e.g. GeoJSON rings)
-    /// into the flat form that <see cref="Triangulate"/> expects,
-    /// writing results into caller-provided spans to avoid heap allocation.
-    /// </summary>
-    /// <param name="data">Multi-dimensional coordinate array.</param>
-    /// <param name="vertices">
-    /// Destination for flattened coordinates. Must have length ≥
-    /// <c>sum(ring.Length for ring in data) * data[0][0].Length</c>.
-    /// Use <see cref="Flatten(double[][][])"/> to obtain the exact size when unknown.
-    /// </param>
-    /// <param name="holes">
-    /// Destination for hole starting indices (expressed in vertex counts, not
-    /// coordinate counts). Must have length ≥ <c>data.Length - 1</c>.
-    /// </param>
-    /// <returns>The number of coordinates per vertex (dimensions).</returns>
-    public static int Flatten(double[][][] data, Span<double> vertices, Span<int> holes)
-    {
-        int dimensions = data[0][0].Length;
-        int vertexIndex = 0;
-        int holeCount = 0;
-        int holeIndex = 0;
-        int prevLen = 0;
-
-        foreach (double[][] ring in data)
-        {
-            foreach (double[] point in ring)
-            {
-                point.AsSpan(0, dimensions).CopyTo(vertices.Slice(vertexIndex, dimensions));
-                vertexIndex += dimensions;
-            }
-
-            if (prevLen > 0)
-            {
-                holeIndex += prevLen;
-                holes[holeCount++] = holeIndex;
-            }
-
-            prevLen = ring.Length;
-        }
-
-        return dimensions;
-    }
-
     // ──────────────────────── linked-list helpers ───────────────────────────
 
     /// <summary>

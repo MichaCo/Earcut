@@ -38,27 +38,4 @@ public class BasicTests
         var result = Earcut.Triangulate(coords);
         Assert.Equal(6, result.Count);
     }
-
-    [Fact]
-    public void Flatten_SpanOverload_MatchesTupleOverload()
-    {
-        double[][][] data =
-        [
-            [[0, 0], [10, 0], [10, 10], [0, 10]],   // outer ring
-            [[2, 2], [2,  8], [ 8,  8], [8,  2]],   // hole
-        ];
-
-        // Reference result from the tuple-returning overload.
-        var (refVertices, refHoles, refDim) = Earcut.Flatten(data);
-
-        // Span overload: caller provides pre-allocated buffers.
-        double[] vertices = new double[refVertices.Length];
-        int[]    holes    = new int[refHoles.Length];
-
-        int dim = Earcut.Flatten(data, vertices, holes);
-
-        Assert.Equal(refDim, dim);
-        Assert.Equal(refVertices, vertices);
-        Assert.Equal(refHoles, holes);
-    }
 }
