@@ -16,4 +16,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Earcut\Earcut.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="expected.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

@@ -9,6 +9,13 @@ namespace ModernEarcut;
 /// </summary>
 public static class Earcut
 {
+    /// <summary>
+    /// Triangulates a polygon given as a flat array of vertex coordinates.
+    /// </summary>
+    /// <param name="data">Flat array of vertex coordinates like [x0,y0, x1,y1, x2,y2, ...]</param>
+    /// <param name="holeIndices">Array of hole indices if any (e.g. [5, 8] for a 12-vertex input would mean one hole with vertices 5–7 and another with 8–11)</param>
+    /// <param name="dim">Number of coordinates per vertex in the input array (2 by default)</param>
+    /// <returns>Array of triangulated indices, where each group of three indices forms a triangle</returns>
     public static int[] Triangulate(ReadOnlySpan<double> data, ReadOnlySpan<int> holeIndices = default, int dim = 2)
     {
         bool hasHoles = holeIndices.Length > 0;
@@ -714,6 +721,76 @@ public static class Earcut
         }
 
         return sum;
+    }
+
+    /// <summary>
+    /// Flattens a multi-dimensional array (e.g. GeoJSON Polygon) into a format expected by Earcut.
+    /// </summary>
+    /// <param name="data">Multi-dimensional array of polygons, where each polygon is an array of rings, and each ring is an array of [x, y] coordinates</param>
+    /// <returns>Flattened data with vertices, holes, and dimensions</returns>
+    public static (double[] vertices, int[] holes, int dimensions) Flatten(double[][][] data)
+    {
+        int dim = data[0][0].Length;
+        var vertices = new List<double>();
+        var holes = new List<int>();
+        int holeIndex = 0;
+
+        for (int i = 0; i < data.Length; i++)
+        {
+            for (int j = 0; j < data[i].Length; j++)
+            {
+                for (int d = 0; d < dim; d++)
+                {
+                    vertices.Add(data[i][j][d]);
+                }
+            }
+            if (i > 0)
+            {
+                holeIndex += data[i - 1].Length;
+                holes.Add(holeIndex);
+            }
+        }
+
+        return (vertices.ToArray(), holes.ToArray(), dim);
+    }
+
+    /// <summary>
+    /// Returns the relative difference between the total area of triangles and the area of the input polygon.
+    /// </summary>
+    /// <param name="data">Flat array of vertex coordinates</param>
+    /// <param name="holeIndices">Array of hole indices</param>
+    /// <param name="dim">Number of coordinates per vertex</param>
+    /// <param name="triangles">Array of triangle indices</param>
+    /// <returns>Deviation value where 0 means the triangulation is fully correct</returns>
+    public static double Deviation(ReadOnlySpan<double> data, ReadOnlySpan<int> holeIndices, int dim, ReadOnlySpan<int> triangles)
+    {
+        bool hasHoles = holeIndices.Length > 0;
+        int outerLen = hasHoles ? holeIndices[0] * dim : data.Length;
+
+        double polygonArea = Math.Abs(SignedArea(data, 0, outerLen, dim));
+        if (hasHoles)
+        {
+            for (int i = 0; i < holeIndices.Length; i++)
+            {
+                int start = holeIndices[i] * dim;
+                int end = i < holeIndices.Length - 1 ? holeIndices[i + 1] * dim : data.Length;
+                polygonArea -= Math.Abs(SignedArea(data, start, end, dim));
+            }
+        }
+
+        double trianglesArea = 0;
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            int a = triangles[i] * dim;
+            int b = triangles[i + 1] * dim;
+            int c = triangles[i + 2] * dim;
+            trianglesArea += Math.Abs(
+                (data[a] - data[c]) * (data[b + 1] - data[a + 1]) -
+                (data[a] - data[b]) * (data[c + 1] - data[a + 1]));
+        }
+
+        return polygonArea == 0 && trianglesArea == 0 ? 0 :
+            Math.Abs((trianglesArea - polygonArea) / polygonArea);
     }
 
     private class Node
