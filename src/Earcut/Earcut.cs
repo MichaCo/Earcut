@@ -9,10 +9,10 @@ namespace ModernEarcut;
 /// </summary>
 public static class Earcut
 {
-    public static int[] Triangulate(double[] data, int[]? holeIndices = null, int dim = 2)
+    public static int[] Triangulate(ReadOnlySpan<double> data, ReadOnlySpan<int> holeIndices = default, int dim = 2)
     {
-        bool hasHoles = holeIndices != null && holeIndices.Length > 0;
-        int outerLen = hasHoles ? holeIndices![0] * dim : data.Length;
+        bool hasHoles = holeIndices.Length > 0;
+        int outerLen = hasHoles ? holeIndices[0] * dim : data.Length;
         Node? outerNode = LinkedList(data, 0, outerLen, dim, true);
         var triangles = new List<int>();
 
@@ -43,7 +43,7 @@ public static class Earcut
 
         if (outerNode != null)
         {
-            if (hasHoles) outerNode = EliminateHoles(data, holeIndices!, outerNode, dim);
+            if (hasHoles) outerNode = EliminateHoles(data, holeIndices, outerNode, dim);
 
             // run earcut algorithm
             if (data.Length > 80 * dim)
@@ -60,7 +60,7 @@ public static class Earcut
     }
 
     // create a circular doubly linked list from polygon points in the specified winding order
-    private static Node? LinkedList(double[] data, int start, int end, int dim, bool clockwise)
+    private static Node? LinkedList(ReadOnlySpan<double> data, int start, int end, int dim, bool clockwise)
     {
         Node? last = null;
 
@@ -328,7 +328,7 @@ public static class Earcut
     }
 
     // link every hole into the outer loop, producing a single-ring polygon without holes
-    private static Node EliminateHoles(double[] data, int[] holeIndices, Node outerNode, int dim)
+    private static Node EliminateHoles(ReadOnlySpan<double> data, ReadOnlySpan<int> holeIndices, Node outerNode, int dim)
     {
         var queue = new List<Node?>();
 
@@ -702,7 +702,7 @@ public static class Earcut
         if (p.nextZ != null) p.nextZ.prevZ = p.prevZ;
     }
 
-    private static double SignedArea(double[] data, int start, int end, int dim)
+    private static double SignedArea(ReadOnlySpan<double> data, int start, int end, int dim)
     {
         double sum = 0;
         int j = end - dim;
