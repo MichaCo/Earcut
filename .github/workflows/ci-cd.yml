@@ -6,6 +6,7 @@ on:
     tags: [ 'v*.*.*' ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build-and-test:
@@ -67,4 +68,6 @@ jobs:
         run: dotnet pack src/Earcut/Earcut.csproj --no-build -c Release -o ./artifacts
 
       - name: Push to NuGet.org
+        # Requires a NUGET_API_KEY secret configured in:
+        # GitHub → Repository Settings → Secrets and variables → Actions → New repository secret
         run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
