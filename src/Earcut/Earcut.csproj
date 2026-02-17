@@ -9,4 +9,37 @@
     <TieredPGO>true</TieredPGO>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <!-- NuGet Package Metadata -->
+  <PropertyGroup>
+    <PackageId>Earcut.NET</PackageId>
+    <VersionPrefix>1.0.0</VersionPrefix>
+    <Authors>Michael Conrad</Authors>
+    <Copyright>Copyright © 2026 Michael Conrad</Copyright>
+    <Description>A fast and robust C# port of the mapbox/earcut polygon triangulation library. Supports holes, zero-order curve spatial indexing, and modern .NET 8+ optimizations.</Description>
+    <PackageTags>earcut;triangulation;polygon;geometry;earclipping</PackageTags>
+    <PackageProjectUrl>https://github.com/MichaCo/Earcut</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/MichaCo/Earcut</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <!-- Strong Name Signing -->
+  <PropertyGroup>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>Earcut.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
 </Project>
