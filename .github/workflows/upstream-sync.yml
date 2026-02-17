@@ -1,0 +1,102 @@
+name: Upstream Sync
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  check-upstream:
+    name: Check for upstream changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to update .last-sync-commit on main
+      issues: write    # needed to create the issue that triggers Copilot
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Get last synced commit
+        id: last-sync
+        run: echo "sha=$(cat .last-sync-commit | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Get latest upstream commit
+        id: upstream
+        run: |
+          # git ls-remote reads public repos without any auth or API calls
+          LATEST=$(git ls-remote https://github.com/mapbox/earcut.git refs/heads/main | cut -f1)
+          if [ -z "$LATEST" ]; then
+            echo "::error::Could not resolve latest upstream commit SHA"
+            exit 1
+          fi
+          echo "sha=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream commit: $LATEST"
+
+      - name: Create Copilot porting issue
+        if: steps.last-sync.outputs.sha != steps.upstream.outputs.sha
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LAST="${{ steps.last-sync.outputs.sha }}"
+          LATEST="${{ steps.upstream.outputs.sha }}"
+          DATE=$(date -u +"%Y-%m-%d")
+
+          echo "Upstream has new commits since ${LAST:0:7} (latest: ${LATEST:0:7})"
+
+          # Shallow-clone the upstream history (metadata only) to build a commit list
+          git clone --depth 50 --no-checkout https://github.com/mapbox/earcut.git /tmp/earcut-upstream
+          COMMITS=$(git -C /tmp/earcut-upstream log \
+            --pretty=format:"- [%h](https://github.com/mapbox/earcut/commit/%H) %s" \
+            "${LAST}..${LATEST}" 2>/dev/null || echo "- (see compare link below)")
+          [ -z "$COMMITS" ] && COMMITS="- (see compare link below)"
+
+          # Update .last-sync-commit on main so we don't re-open the issue next run
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "$LATEST" > .last-sync-commit
+          git add .last-sync-commit
+          git commit -m "chore: advance upstream sync marker to ${LATEST:0:7}"
+          git push origin main
+
+          # Ensure the auto-sync label exists
+          gh label create "auto-sync" \
+            --description "Automatically generated upstream sync issue" \
+            --color "0075ca" 2>/dev/null || true
+
+          # Create an issue assigned to the Copilot coding agent.
+          # Assigning to @Copilot triggers the coding agent to pick it up
+          # and create a PR with the ported C# changes.
+          gh issue create \
+            --title "Port upstream earcut changes to C# (${LATEST:0:7}) — ${DATE}" \
+            --label "auto-sync" \
+            --assignee "Copilot" \
+            --body "## Upstream Sync Task
+
+@Copilot please port the upstream changes listed below to C# and open a pull request.
+
+New commits have been pushed to [mapbox/earcut](https://github.com/mapbox/earcut) since the last sync.
+
+**Previous synced commit:** [\`${LAST:0:7}\`](https://github.com/mapbox/earcut/commit/${LAST})
+**New upstream commit:** [\`${LATEST:0:7}\`](https://github.com/mapbox/earcut/commit/${LATEST})
+**Full diff:** https://github.com/mapbox/earcut/compare/${LAST}...${LATEST}
+
+### Upstream commits to port
+
+$COMMITS
+
+### What to port
+
+Please port all upstream changes to C# and open a pull request. Follow the [PORTING_GUIDE.md](PORTING_GUIDE.md) for language mapping conventions.
+
+Key files to check in the upstream diff:
+- \`src/earcut.js\` → port any algorithm changes to \`src/Earcut/Earcut.cs\`
+- \`test/fixtures/*.json\` → copy any new/changed fixtures to \`test/Earcut.Tests/fixtures/\`
+- \`test/expected.json\` → update \`test/Earcut.Tests/expected.json\` to match
+
+After porting:
+1. Run \`dotnet test\` and ensure all tests pass
+2. Update \`PORTING_GUIDE.md\` if new language patterns were introduced"
