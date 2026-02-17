@@ -170,7 +170,7 @@ dotnet_remove_unnecessary_suppression_exclusions = CA1707
 dotnet_diagnostic.CS1591.severity = warning
 
 # CA1707: Identifiers should not contain underscores
-dotnet_diagnostic.CA1707.severity = warning
+dotnet_diagnostic.CA1707.severity = none
 
 # CA1825: Avoid zero-length array allocations (TODO: until we drop .NET45)
 dotnet_diagnostic.CA1825.severity = silent

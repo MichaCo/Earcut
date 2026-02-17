@@ -4,10 +4,8 @@
 // See LICENSE file for details.
 
 using System.Runtime.CompilerServices;
-using System.Buffers;
 
 [module: SkipLocalsInit]
-
 namespace Earcut;
 
 /// <summary>
@@ -34,6 +32,11 @@ public static class Earcut
         ReadOnlySpan<int> holeIndices = default,
         int dim = 2)
     {
+        if (data.IsEmpty)
+        {
+            return [];
+        }
+
         bool hasHoles = !holeIndices.IsEmpty;
         int outerLen = hasHoles ? holeIndices[0] * dim : data.Length;
 
@@ -1074,17 +1077,22 @@ public static class Earcut
     /// </summary>
     private sealed class Node(int i, double x, double y)
     {
-        public readonly int I = i;       // vertex index in the coordinate array
-        public readonly double X = x;    // X coordinate
-        public readonly double Y = y;    // Y coordinate
+        public int I { get; } = i;          // vertex index in the coordinate array
 
-        public Node? Prev;               // previous vertex in ring
-        public Node? Next;               // next vertex in ring
+        public double X { get; } = x;       // X coordinate
 
-        public int Z;                    // z-order curve value
-        public Node? PrevZ;              // previous node in z-order
-        public Node? NextZ;              // next node in z-order
+        public double Y { get; } = y;       // Y coordinate
 
-        public bool Steiner;             // is this a Steiner point?
+        public Node? Prev { get; set; }     // previous vertex in ring
+
+        public Node? Next { get; set; }     // next vertex in ring
+
+        public int Z { get; set; }          // z-order curve value
+
+        public Node? PrevZ { get; set; }    // previous node in z-order
+
+        public Node? NextZ { get; set; }    // next node in z-order
+
+        public bool Steiner { get; set; }   // is this a Steiner point?
     }
 }
