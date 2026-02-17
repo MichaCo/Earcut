@@ -594,8 +594,7 @@ public static class Earcut
         Node outerNode,
         int dim)
     {
-        Node?[] holeNodes = new Node?[holeIndices.Length];
-        int holeCount = 0;
+        var queue = new List<Node>(holeIndices.Length);
 
         for (int i = 0; i < holeIndices.Length; i++)
         {
@@ -613,27 +612,32 @@ public static class Earcut
                     list.Steiner = true;
                 }
 
-                holeNodes[holeCount++] = GetLeftmost(list);
+                queue.Add(GetLeftmost(list));
             }
         }
 
-        // 64 indices × 4 bytes = 256 bytes on the stack, well within safe limits.
-        // Polygons with more than 64 holes are uncommon; they fall back to a heap array.
-        const int StackThreshold = 64;
-        Span<int> sortedIndices = holeCount <= StackThreshold
-            ? stackalloc int[holeCount]
-            : new int[holeCount];
-
-        for (int i = 0; i < holeCount; i++)
+        queue.Sort(static (a, b) =>
         {
-            sortedIndices[i] = i;
-        }
+            int cmp = a.X.CompareTo(b.X);
+            if (cmp != 0)
+            {
+                return cmp;
+            }
 
-        sortedIndices.Sort(new HoleIndexComparer(holeNodes));
+            cmp = a.Y.CompareTo(b.Y);
+            if (cmp != 0)
+            {
+                return cmp;
+            }
 
-        for (int i = 0; i < holeCount; i++)
+            double aSlope = (a.Next!.Y - a.Y) / (a.Next.X - a.X);
+            double bSlope = (b.Next!.Y - b.Y) / (b.Next.X - b.X);
+            return aSlope.CompareTo(bSlope);
+        });
+
+        foreach (Node hole in queue)
         {
-            outerNode = EliminateHole(holeNodes[sortedIndices[i]]!, outerNode);
+            outerNode = EliminateHole(hole, outerNode);
         }
 
         return outerNode;
@@ -1119,34 +1123,5 @@ public static class Earcut
         public Node? NextZ { get; set; }    // next node in z-order
 
         public bool Steiner { get; set; }   // is this a Steiner point?
-    }
-
-    /// <summary>
-    /// Compares hole nodes by their leftmost-point position for sort ordering.
-    /// Used with a stack-allocated index buffer to avoid heap allocation.
-    /// </summary>
-    private readonly struct HoleIndexComparer(Node?[] nodes) : IComparer<int>
-    {
-        public int Compare(int a, int b)
-        {
-            Node na = nodes[a]!;
-            Node nb = nodes[b]!;
-
-            int cmp = na.X.CompareTo(nb.X);
-            if (cmp != 0)
-            {
-                return cmp;
-            }
-
-            cmp = na.Y.CompareTo(nb.Y);
-            if (cmp != 0)
-            {
-                return cmp;
-            }
-
-            double aSlope = (na.Next!.Y - na.Y) / (na.Next.X - na.X);
-            double bSlope = (nb.Next!.Y - nb.Y) / (nb.Next.X - nb.X);
-            return aSlope.CompareTo(bSlope);
-        }
     }
 }
