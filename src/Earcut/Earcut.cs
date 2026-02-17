@@ -292,7 +292,7 @@ public static class Earcut
                 int count = triangles.Count;
                 CollectionsMarshal.SetCount(triangles, count + 3);
                 Span<int> triSpan = CollectionsMarshal.AsSpan(triangles);
-                triSpan[count]     = prev.I;
+                triSpan[count] = prev.I;
                 triSpan[count + 1] = ear.I;
                 triSpan[count + 2] = next.I;
 
@@ -481,7 +481,7 @@ public static class Earcut
                 int count = triangles.Count;
                 CollectionsMarshal.SetCount(triangles, count + 3);
                 Span<int> triSpan = CollectionsMarshal.AsSpan(triangles);
-                triSpan[count]     = a.I;
+                triSpan[count] = a.I;
                 triSpan[count + 1] = p.I;
                 triSpan[count + 2] = b.I;
 
