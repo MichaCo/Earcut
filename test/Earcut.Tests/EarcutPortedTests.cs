@@ -5,6 +5,109 @@ namespace Earcut.Tests;
 
 public class EarcutPortedTests
 {
+    private class ExpectedResults
+    {
+        public Dictionary<string, int> Triangles { get; set; } = new();
+        public Dictionary<string, double> Errors { get; set; } = new();
+        
+        [System.Text.Json.Serialization.JsonPropertyName("errors-with-rotation")]
+        public Dictionary<string, double> ErrorsWithRotation { get; set; } = new();
+    }
+
+    private static ExpectedResults LoadExpectedResults()
+    {
+        var expectedPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "expected.json");
+        var json = File.ReadAllText(expectedPath);
+        var options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+        return JsonSerializer.Deserialize<ExpectedResults>(json, options) ?? new ExpectedResults();
+    }
+
+    public static IEnumerable<object[]> GetFixtureTestData()
+    {
+        var expected = LoadExpectedResults();
+        var rotations = new[] { 0, 90, 180, 270 };
+
+        foreach (var kvp in expected.Triangles)
+        {
+            string fixtureName = kvp.Key;
+            int expectedTriangles = kvp.Value;
+
+            foreach (int rotation in rotations)
+            {
+                double expectedDeviation = 0.0;
+                
+                // Determine expected deviation based on rotation
+                if (rotation != 0 && expected.ErrorsWithRotation.ContainsKey(fixtureName))
+                {
+                    expectedDeviation = expected.ErrorsWithRotation[fixtureName];
+                }
+                else if (expected.Errors.ContainsKey(fixtureName))
+                {
+                    expectedDeviation = expected.Errors[fixtureName];
+                }
+
+                yield return new object[] { fixtureName, rotation, expectedTriangles, expectedDeviation };
+            }
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(GetFixtureTestData))]
+    public void FixtureTest(string fixtureName, int rotation, int expectedTriangles, double expectedDeviation)
+    {
+        // Load fixture
+        var fixturePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "fixtures", $"{fixtureName}.json");
+        Assert.True(File.Exists(fixturePath), $"Fixture file not found: {fixtureName}.json");
+        
+        var coordsJson = File.ReadAllText(fixturePath);
+        var coords = JsonSerializer.Deserialize<double[][][]>(coordsJson);
+        Assert.NotNull(coords);
+
+        // Apply rotation if needed
+        if (rotation != 0)
+        {
+            double theta = rotation * Math.PI / 180;
+            int xx = (int)Math.Round(Math.Cos(theta));
+            int xy = (int)Math.Round(-Math.Sin(theta));
+            int yx = (int)Math.Round(Math.Sin(theta));
+            int yy = (int)Math.Round(Math.Cos(theta));
+
+            foreach (var ring in coords)
+            {
+                foreach (var coord in ring)
+                {
+                    double x = coord[0];
+                    double y = coord[1];
+                    coord[0] = xx * x + xy * y;
+                    coord[1] = yx * x + yy * y;
+                }
+            }
+        }
+
+        // Flatten and triangulate
+        var data = Earcut.Flatten(coords);
+        var indices = Earcut.Triangulate(data.vertices, data.holes, data.dimensions);
+        var err = Earcut.Deviation(data.vertices, data.holes, data.dimensions, indices);
+
+        int numTriangles = indices.Length / 3;
+
+        // Validate triangle count (only for rotation = 0)
+        if (rotation == 0)
+        {
+            Assert.Equal(expectedTriangles, numTriangles);
+        }
+
+        // Validate deviation
+        if (expectedTriangles > 0)
+        {
+            Assert.True(err <= expectedDeviation, 
+                $"Fixture {fixtureName} rotation {rotation}: deviation {err} > expected {expectedDeviation}");
+        }
+    }
+
     [Fact]
     public void Indices2D()
     {
@@ -37,75 +140,5 @@ public class EarcutPortedTests
         int[] holes = [5];
         // Should not hang
         Earcut.Triangulate(data, holes, 2);
-    }
-
-    [Fact]
-    public void Building()
-    {
-        var fixturePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "fixtures", "building.json");
-        if (!File.Exists(fixturePath)) return;
-        
-        var coordsJson = File.ReadAllText(fixturePath);
-        var coords = JsonSerializer.Deserialize<double[][][]>(coordsJson);
-        if (coords == null) return;
-
-        var data = Earcut.Flatten(coords);
-        var indices = Earcut.Triangulate(data.vertices, data.holes, data.dimensions);
-        
-        Assert.Equal(13, indices.Length / 3);
-    }
-
-    [Fact]
-    public void Dude()
-    {
-        var fixturePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "fixtures", "dude.json");
-        if (!File.Exists(fixturePath)) return;
-        
-        var coordsJson = File.ReadAllText(fixturePath);
-        var coords = JsonSerializer.Deserialize<double[][][]>(coordsJson);
-        if (coords == null) return;
-
-        var data = Earcut.Flatten(coords);
-        var indices = Earcut.Triangulate(data.vertices, data.holes, data.dimensions);
-        var err = Earcut.Deviation(data.vertices, data.holes, data.dimensions, indices);
-        
-        Assert.Equal(106, indices.Length / 3);
-        Assert.True(err <= 2e-15);
-    }
-
-    [Fact]
-    public void Water()
-    {
-        var fixturePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "fixtures", "water.json");
-        if (!File.Exists(fixturePath)) return;
-        
-        var coordsJson = File.ReadAllText(fixturePath);
-        var coords = JsonSerializer.Deserialize<double[][][]>(coordsJson);
-        if (coords == null) return;
-
-        var data = Earcut.Flatten(coords);
-        var indices = Earcut.Triangulate(data.vertices, data.holes, data.dimensions);
-        var err = Earcut.Deviation(data.vertices, data.holes, data.dimensions, indices);
-        
-        Assert.Equal(2482, indices.Length / 3);
-        Assert.True(err <= 0.0008);
-    }
-
-    [Fact]
-    public void BadHole()
-    {
-        var fixturePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "fixtures", "bad-hole.json");
-        if (!File.Exists(fixturePath)) return;
-        
-        var coordsJson = File.ReadAllText(fixturePath);
-        var coords = JsonSerializer.Deserialize<double[][][]>(coordsJson);
-        if (coords == null) return;
-
-        var data = Earcut.Flatten(coords);
-        var indices = Earcut.Triangulate(data.vertices, data.holes, data.dimensions);
-        var err = Earcut.Deviation(data.vertices, data.holes, data.dimensions, indices);
-        
-        Assert.Equal(42, indices.Length / 3);
-        Assert.True(err <= 0.019);
     }
 }
