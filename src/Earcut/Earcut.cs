@@ -602,7 +602,7 @@ public static class Earcut
         {
             // Clear only the used portion to avoid unnecessary work
             Array.Clear(queue, 0, queueSize);
-            ArrayPool<Node>.Shared.Return(queue, clearArray: false);
+            ArrayPool<Node>.Shared.Return(queue);
         }
     }
 
