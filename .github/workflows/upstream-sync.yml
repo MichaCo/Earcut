@@ -30,16 +30,10 @@ jobs:
       - name: Get latest upstream commit
         id: upstream
         run: |
-          # mapbox/earcut is a public repo — no auth token required
-          RESPONSE=$(curl -sf "https://api.github.com/repos/mapbox/earcut/commits/main" \
-            -H "Accept: application/vnd.github+json")
-          if [ $? -ne 0 ] || [ -z "$RESPONSE" ]; then
-            echo "::error::Failed to fetch upstream commit from GitHub API"
-            exit 1
-          fi
-          LATEST=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['sha'])")
+          # Use git ls-remote to query the public upstream repo — no API calls or auth needed
+          LATEST=$(git ls-remote https://github.com/mapbox/earcut.git refs/heads/main | cut -f1)
           if [ -z "$LATEST" ]; then
-            echo "::error::Could not parse latest upstream commit SHA"
+            echo "::error::Could not resolve latest upstream commit SHA"
             exit 1
           fi
           echo "sha=$LATEST" >> "$GITHUB_OUTPUT"
@@ -58,52 +52,35 @@ jobs:
             echo "Upstream has new commits since $LAST (latest: $LATEST)."
           fi
 
-      - name: Fetch upstream diff summary
+      - name: Clone upstream repository
+        if: steps.check.outputs.needed == 'true'
+        run: |
+          LATEST="${{ steps.upstream.outputs.sha }}"
+          # Shallow-clone main of the public upstream repo — no auth required
+          git clone --depth 50 https://github.com/mapbox/earcut.git /tmp/earcut-upstream
+          echo "Cloned upstream at $LATEST"
+          echo "Upstream files:"
+          find /tmp/earcut-upstream -not -path '/tmp/earcut-upstream/.git/*' -type f | sort
+
+      - name: Build commit list for PR body
         if: steps.check.outputs.needed == 'true'
         id: diff
         run: |
           LAST="${{ steps.last-sync.outputs.sha }}"
           LATEST="${{ steps.upstream.outputs.sha }}"
 
-          # Fetch the compare diff from GitHub API (public repo — no auth needed)
-          DIFF=$(curl -sf \
-            "https://api.github.com/repos/mapbox/earcut/compare/${LAST}...${LATEST}" \
-            -H "Accept: application/vnd.github+json")
-          if [ $? -ne 0 ] || [ -z "$DIFF" ]; then
-            echo "::warning::Failed to fetch upstream diff; the PR will be created but the commit list in the PR body will be empty"
-            DIFF="{}"
-          fi
+          # Use git log to list commits between last-sync and latest — pure git, no API calls
+          COMMITS=$(git -C /tmp/earcut-upstream log \
+            --pretty=format:"- [%h](https://github.com/mapbox/earcut/commit/%H) %s" \
+            "${LAST}..${LATEST}" 2>/dev/null || echo "- (could not retrieve commit list)")
 
-          # Extract commit messages for PR body
-          COMMITS=$(echo "$DIFF" | python3 -c "
-          import sys, json
-          d = json.load(sys.stdin)
-          commits = d.get('commits', [])
-          lines = []
-          for c in commits:
-              sha = c['sha'][:7]
-              msg = c['commit']['message'].split('\n')[0]
-              url = c['html_url']
-              lines.append(f'- [{sha}]({url}) {msg}')
-          print('\n'.join(lines) if lines else '- (no commits found)')
-          " 2>/dev/null || echo "- (could not parse commits)")
+          if [ -z "$COMMITS" ]; then
+            COMMITS="- (no commits found)"
+          fi
 
           echo "COMMITS<<EOF" >> "$GITHUB_OUTPUT"
           echo "$COMMITS" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
-
-      - name: Clone upstream repository at new commit
-        if: steps.check.outputs.needed == 'true'
-        run: |
-          LATEST="${{ steps.upstream.outputs.sha }}"
-
-          # Shallow-clone the tip of main (which IS $LATEST, confirmed above)
-          # from the public upstream repo — no auth required
-          git clone --depth 1 https://github.com/mapbox/earcut.git /tmp/earcut-upstream
-
-          echo "Cloned upstream at $LATEST"
-          echo "Upstream files:"
-          find /tmp/earcut-upstream -not -path '/tmp/earcut-upstream/.git/*' -type f | sort
 
       - name: Create sync branch and PR
         if: steps.check.outputs.needed == 'true'
