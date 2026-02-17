@@ -26,7 +26,7 @@ public static class Earcut
     /// </param>
     /// <param name="dim">Number of coordinates per vertex (default 2).</param>
     /// <returns>Flat array of triangle vertex indices (length is a multiple of 3).</returns>
-    public static int[] Triangulate(
+    public static IReadOnlyList<int> Triangulate(
         ReadOnlySpan<double> data,
         ReadOnlySpan<int> holeIndices = default,
         int dim = 2)
@@ -91,7 +91,7 @@ public static class Earcut
 
         EarcutLinked(outerNode, triangles, dim, minX, minY, invSize, pass: 0);
 
-        return triangles.ToArray();
+        return triangles;
     }
 
     /// <summary>

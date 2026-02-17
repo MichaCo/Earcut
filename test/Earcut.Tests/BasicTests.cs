@@ -21,7 +21,7 @@ public class BasicTests
     {
         double[] coords = [0, 0, 1, 0, 0.5, 1];
         var result = Earcut.Triangulate(coords);
-        Assert.Equal(3, result.Length);
+        Assert.Equal(3, result.Count);
     }
 
     [Fact]
@@ -29,6 +29,6 @@ public class BasicTests
     {
         double[] coords = [0, 0, 1, 0, 1, 1, 0, 1];
         var result = Earcut.Triangulate(coords);
-        Assert.Equal(6, result.Length);
+        Assert.Equal(6, result.Count);
     }
 }

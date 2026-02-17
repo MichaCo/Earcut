@@ -9,6 +9,7 @@ using BenchmarkDotNet.Attributes;
 namespace Earcut.Benchmarks;
 
 [MemoryDiagnoser]
+[ShortRunJob]
 public class TriangulationBenchmarks
 {
     private double[] _square = null!;
@@ -80,31 +81,31 @@ public class TriangulationBenchmarks
     }
 
     [Benchmark]
-    public int[] TriangulateSquare()
+    public IReadOnlyList<int> TriangulateSquare()
     {
         return Earcut.Triangulate(_square);
     }
 
     [Benchmark]
-    public int[] TriangulateComplexPolygon()
+    public IReadOnlyList<int> TriangulateComplexPolygon()
     {
         return Earcut.Triangulate(_complexPolygon);
     }
 
     [Benchmark]
-    public int[] TriangulateDude()
+    public IReadOnlyList<int> TriangulateDude()
     {
         return Earcut.Triangulate(_dudeVertices, _dudeHoles);
     }
 
     [Benchmark]
-    public int[] TriangulateWater()
+    public IReadOnlyList<int> TriangulateWater()
     {
         return Earcut.Triangulate(_waterVertices, _waterHoles);
     }
 
     [Benchmark]
-    public int[] TriangulateWaterHuge()
+    public IReadOnlyList<int> TriangulateWaterHuge()
     {
         return Earcut.Triangulate(_waterHugeVertices, _waterHugeHoles);
     }
