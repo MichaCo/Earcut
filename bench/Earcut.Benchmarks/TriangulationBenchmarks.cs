@@ -63,9 +63,9 @@ public class TriangulationBenchmarks
             var coords = JsonSerializer.Deserialize<double[][][]>(json);
             if (coords != null)
             {
-                var data = Earcut.Flatten(coords);
-                vertices = data.Vertices;
-                holes = data.Holes;
+                var (Vertices, Holes, Dimensions) = Earcut.Flatten(coords);
+                vertices = Vertices;
+                holes = Holes;
             }
             else
             {
@@ -86,23 +86,23 @@ public class TriangulationBenchmarks
         return Earcut.Triangulate(_square);
     }
 
-    [Benchmark]
-    public IReadOnlyList<int> TriangulateComplexPolygon()
-    {
-        return Earcut.Triangulate(_complexPolygon);
-    }
+    //[Benchmark]
+    //public IReadOnlyList<int> TriangulateComplexPolygon()
+    //{
+    //    return Earcut.Triangulate(_complexPolygon);
+    //}
 
-    [Benchmark]
-    public IReadOnlyList<int> TriangulateDude()
-    {
-        return Earcut.Triangulate(_dudeVertices, _dudeHoles);
-    }
+    //[Benchmark]
+    //public IReadOnlyList<int> TriangulateDude()
+    //{
+    //    return Earcut.Triangulate(_dudeVertices, _dudeHoles);
+    //}
 
-    [Benchmark]
-    public IReadOnlyList<int> TriangulateWater()
-    {
-        return Earcut.Triangulate(_waterVertices, _waterHoles);
-    }
+    //[Benchmark]
+    //public IReadOnlyList<int> TriangulateWater()
+    //{
+    //    return Earcut.Triangulate(_waterVertices, _waterHoles);
+    //}
 
     [Benchmark]
     public IReadOnlyList<int> TriangulateWaterHuge()

@@ -96,9 +96,9 @@ public class EarcutPortedTests
         }
 
         // Flatten and triangulate
-        var data = Earcut.Flatten(coords);
-        var indices = Earcut.Triangulate(data.Vertices, data.Holes, data.Dimensions);
-        var err = Earcut.Deviation(data.Vertices, data.Holes, data.Dimensions, indices.ToArray());
+        var (Vertices, Holes, Dimensions) = Earcut.Flatten(coords);
+        var indices = Earcut.Triangulate(Vertices, Holes, Dimensions);
+        var err = Earcut.Deviation(Vertices, Holes, Dimensions, indices.ToArray());
 
         int numTriangles = indices.Count / 3;
 

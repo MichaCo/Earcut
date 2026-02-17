@@ -10,9 +10,16 @@ namespace Earcut.Tests;
 public class BasicTests
 {
     [Fact]
+    public void Triangulate_NUll_ReturnsEmpty()
+    {
+        var result = Earcut.Triangulate(null);
+        Assert.Empty(result);
+    }
+
+    [Fact]
     public void Triangulate_EmptyArray_ReturnsEmpty()
     {
-        var result = Earcut.Triangulate([]);
+        var result = Earcut.Triangulate([], [1]);
         Assert.Empty(result);
     }
 

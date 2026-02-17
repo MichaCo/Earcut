@@ -143,31 +143,33 @@ public static class Earcut
             totalCoords += ring.Length * dimensions;
         }
 
-        var vertices = new List<double>(totalCoords);
-        var holes = new List<int>(data.Length - 1);
+        // Allocate arrays directly - no intermediate List<T>
+        var vertices = new double[totalCoords];
+        var holes = new int[data.Length - 1];
+
+        int vertexIndex = 0;
         int holeIndex = 0;
+        int holeCount = 0;
         int prevLen = 0;
 
         foreach (double[][] ring in data)
         {
             foreach (double[] point in ring)
             {
-                for (int d = 0; d < dimensions; d++)
-                {
-                    vertices.Add(point[d]);
-                }
+                point.AsSpan(0, dimensions).CopyTo(vertices.AsSpan(vertexIndex));
+                vertexIndex += dimensions;
             }
 
             if (prevLen > 0)
             {
                 holeIndex += prevLen;
-                holes.Add(holeIndex);
+                holes[holeCount++] = holeIndex;
             }
 
             prevLen = ring.Length;
         }
 
-        return (vertices.ToArray(), holes.ToArray(), dimensions);
+        return (vertices, holes, dimensions);
     }
 
     // ──────────────────────── linked-list helpers ───────────────────────────
@@ -538,72 +540,53 @@ public static class Earcut
         Node outerNode,
         int dim)
     {
-        int holeCount = holeIndices.Length;
-        
-        if (holeCount == 0)
-        {
-            return outerNode;
-        }
-        
-        // Use ArrayPool for the queue
-        Node[] queue = ArrayPool<Node>.Shared.Rent(holeCount);
-        int queueSize = 0;
+        var queue = new List<Node>(holeIndices.Length);
 
-        try
+        for (int i = 0; i < holeIndices.Length; i++)
         {
-            for (int i = 0; i < holeIndices.Length; i++)
+            int start = holeIndices[i] * dim;
+            int end = i < holeIndices.Length - 1
+                ? holeIndices[i + 1] * dim
+                : data.Length;
+
+            Node? list = BuildLinkedList(data, start, end, dim, clockwise: false);
+
+            if (list is not null)
             {
-                int start = holeIndices[i] * dim;
-                int end = i < holeIndices.Length - 1
-                    ? holeIndices[i + 1] * dim
-                    : data.Length;
-
-                Node? list = BuildLinkedList(data, start, end, dim, clockwise: false);
-
-                if (list is not null)
+                if (list == list.Next)
                 {
-                    if (list == list.Next)
-                    {
-                        list.Steiner = true;
-                    }
-
-                    queue[queueSize++] = GetLeftmost(list);
+                    list.Steiner = true;
                 }
+
+                queue.Add(GetLeftmost(list));
+            }
+        }
+
+        queue.Sort(static (a, b) =>
+        {
+            int cmp = a.X.CompareTo(b.X);
+            if (cmp != 0)
+            {
+                return cmp;
             }
 
-            // Sort only the valid portion
-            Array.Sort(queue, 0, queueSize, Comparer<Node>.Create(static (a, b) =>
+            cmp = a.Y.CompareTo(b.Y);
+            if (cmp != 0)
             {
-                int cmp = a.X.CompareTo(b.X);
-                if (cmp != 0)
-                {
-                    return cmp;
-                }
-
-                cmp = a.Y.CompareTo(b.Y);
-                if (cmp != 0)
-                {
-                    return cmp;
-                }
-
-                double aSlope = (a.Next!.Y - a.Y) / (a.Next.X - a.X);
-                double bSlope = (b.Next!.Y - b.Y) / (b.Next.X - b.X);
-                return aSlope.CompareTo(bSlope);
-            }));
-
-            for (int i = 0; i < queueSize; i++)
-            {
-                outerNode = EliminateHole(queue[i], outerNode);
+                return cmp;
             }
 
-            return outerNode;
-        }
-        finally
+            double aSlope = (a.Next!.Y - a.Y) / (a.Next.X - a.X);
+            double bSlope = (b.Next!.Y - b.Y) / (b.Next.X - b.X);
+            return aSlope.CompareTo(bSlope);
+        });
+
+        foreach (Node hole in queue)
         {
-            // Clear only the used portion to avoid unnecessary work
-            Array.Clear(queue, 0, queueSize);
-            ArrayPool<Node>.Shared.Return(queue);
+            outerNode = EliminateHole(hole, outerNode);
         }
+
+        return outerNode;
     }
 
     private static Node EliminateHole(Node hole, Node outerNode)
@@ -936,7 +919,7 @@ public static class Earcut
                 return true;
             }
 
-            p = p.Next;
+            p = p.Next!;
         }
         while (p != a);
 
