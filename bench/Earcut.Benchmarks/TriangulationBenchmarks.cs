@@ -1,5 +1,4 @@
 using BenchmarkDotNet.Attributes;
-using ModernEarcut;
 using System.Text.Json;
 
 namespace Earcut.Benchmarks;
@@ -58,7 +57,7 @@ public class TriangulationBenchmarks
             var coords = JsonSerializer.Deserialize<double[][][]>(json);
             if (coords != null)
             {
-                var data = ModernEarcut.Earcut.Flatten(coords);
+                var data = Earcut.Flatten(coords);
                 vertices = data.vertices;
                 holes = data.holes;
             }
@@ -78,30 +77,30 @@ public class TriangulationBenchmarks
     [Benchmark]
     public int[] TriangulateSquare()
     {
-        return ModernEarcut.Earcut.Triangulate(_square);
+        return Earcut.Triangulate(_square);
     }
 
     [Benchmark]
     public int[] TriangulateComplexPolygon()
     {
-        return ModernEarcut.Earcut.Triangulate(_complexPolygon);
+        return Earcut.Triangulate(_complexPolygon);
     }
 
     [Benchmark]
     public int[] TriangulateDude()
     {
-        return ModernEarcut.Earcut.Triangulate(_dudeVertices, _dudeHoles);
+        return Earcut.Triangulate(_dudeVertices, _dudeHoles);
     }
 
     [Benchmark]
     public int[] TriangulateWater()
     {
-        return ModernEarcut.Earcut.Triangulate(_waterVertices, _waterHoles);
+        return Earcut.Triangulate(_waterVertices, _waterHoles);
     }
 
     [Benchmark]
     public int[] TriangulateWaterHuge()
     {
-        return ModernEarcut.Earcut.Triangulate(_waterHugeVertices, _waterHugeHoles);
+        return Earcut.Triangulate(_waterHugeVertices, _waterHugeHoles);
     }
 }

@@ -2,6 +2,8 @@
 
 A C# port of the [mapbox/earcut](https://github.com/mapbox/earcut) polygon triangulation library.
 
+> **Note:** This is a 100% AI-driven port, created entirely by AI agents to demonstrate modern .NET development practices.
+
 Fast and robust ear-clipping polygon triangulation library for .NET 8+.
 
 ## Features
@@ -10,11 +12,12 @@ Fast and robust ear-clipping polygon triangulation library for .NET 8+.
 - Supports holes
 - Zero-order curve spatial indexing for performance
 - Modern C# implementation with .NET 8+ optimizations
+- Uses ReadOnlySpan for zero-copy performance
 
 ## Usage
 
 ```csharp
-using ModernEarcut;
+using Earcut;
 
 // Simple polygon
 double[] coords = [0, 0, 1, 0, 0.5, 1];

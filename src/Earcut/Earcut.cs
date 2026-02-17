@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace ModernEarcut;
+namespace Earcut;
 
 /// <summary>
 /// Fast polygon triangulation algorithm using ear clipping technique.
