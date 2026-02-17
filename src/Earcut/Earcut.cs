@@ -4,7 +4,6 @@
 // See LICENSE file for details.
 
 using System.Runtime.CompilerServices;
-using System.Numerics;
 using System.Buffers;
 
 [module: SkipLocalsInit]
@@ -541,12 +540,17 @@ public static class Earcut
     {
         int holeCount = holeIndices.Length;
         
+        if (holeCount == 0)
+        {
+            return outerNode;
+        }
+        
         // Use ArrayPool for the queue
         Node[] queue = ArrayPool<Node>.Shared.Rent(holeCount);
+        int queueSize = 0;
 
         try
         {
-            int queueSize = 0;
             for (int i = 0; i < holeIndices.Length; i++)
             {
                 int start = holeIndices[i] * dim;
@@ -596,7 +600,9 @@ public static class Earcut
         }
         finally
         {
-            ArrayPool<Node>.Shared.Return(queue, clearArray: true);
+            // Clear only the used portion to avoid unnecessary work
+            Array.Clear(queue, 0, queueSize);
+            ArrayPool<Node>.Shared.Return(queue, clearArray: false);
         }
     }
 
