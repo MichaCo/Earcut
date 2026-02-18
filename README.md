@@ -1,5 +1,9 @@
 # Earcut.NET
 
+[![Build](https://github.com/MichaCo/Earcut/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/MichaCo/Earcut/actions/workflows/ci-cd.yml)
+[![codecov](https://codecov.io/gh/MichaCo/Earcut/branch/main/graph/badge.svg)](https://codecov.io/gh/MichaCo/Earcut)
+[![NuGet](https://img.shields.io/nuget/v/Earcut.NET.svg)](https://www.nuget.org/packages/Earcut.NET)
+
 A C# port of the [mapbox/earcut](https://github.com/mapbox/earcut) polygon triangulation library.
 
 > **Note:** This is a 100% AI-driven port, created entirely by AI agents to demonstrate modern .NET development practices.
