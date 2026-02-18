@@ -6,7 +6,7 @@
 using System.Text.Json;
 using Xunit;
 
-namespace Earcut.Tests;
+namespace EarcutDotNet.Tests;
 
 public class EarcutPortedTests
 {

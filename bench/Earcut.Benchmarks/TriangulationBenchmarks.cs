@@ -6,7 +6,7 @@
 using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 
-namespace Earcut.Benchmarks;
+namespace EarcutDotNet.Benchmarks;
 
 [MemoryDiagnoser]
 [ShortRunJob]

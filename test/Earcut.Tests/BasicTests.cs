@@ -5,7 +5,7 @@
 
 using Xunit;
 
-namespace Earcut.Tests;
+namespace EarcutDotNet.Tests;
 
 public class BasicTests
 {

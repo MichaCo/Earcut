@@ -7,7 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 [module: SkipLocalsInit]
-namespace Earcut;
+namespace EarcutDotNet;
 
 /// <summary>
 /// Fast polygon triangulation using the ear-clipping technique.
@@ -1012,16 +1012,8 @@ public static class Earcut
     {
         p.Next!.Prev = p.Prev;
         p.Prev!.Next = p.Next;
-
-        if (p.PrevZ is not null)
-        {
-            p.PrevZ.NextZ = p.NextZ;
-        }
-
-        if (p.NextZ is not null)
-        {
-            p.NextZ.PrevZ = p.PrevZ;
-        }
+        p.PrevZ?.NextZ = p.NextZ;
+        p.NextZ?.PrevZ = p.PrevZ;
     }
 
     private static double SignedArea(
