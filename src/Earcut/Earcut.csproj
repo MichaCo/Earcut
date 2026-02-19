@@ -13,7 +13,7 @@
   <!-- NuGet Package Metadata -->
   <PropertyGroup>
     <PackageId>Earcut.NET</PackageId>
-    <VersionPrefix>1.0.5</VersionPrefix>
+    <VersionPrefix>1.1.0</VersionPrefix>
     <Authors>Michael Conrad</Authors>
     <Copyright>Copyright © 2026 Michael Conrad</Copyright>
     <Description>A fast and robust C# port of the mapbox/earcut polygon triangulation library. Supports holes, zero-order curve spatial indexing, and modern .NET 8+ optimizations.</Description>
@@ -29,12 +29,6 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <DebugType>portable</DebugType>
-  </PropertyGroup>
-
-  <!-- Strong Name Signing -->
-  <PropertyGroup>
-    <SignAssembly>true</SignAssembly>
-    <AssemblyOriginatorKeyFile>Earcut.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
 
   <ItemGroup>
