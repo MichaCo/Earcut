@@ -4,7 +4,6 @@
 // See LICENSE file for details.
 
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 [module: SkipLocalsInit]
 namespace EarcutDotNet;
@@ -28,7 +27,7 @@ public static class Earcut
     /// </param>
     /// <param name="dim">Number of coordinates per vertex (default 2).</param>
     /// <returns>Flat array of triangle vertex indices (length is a multiple of 3).</returns>
-    public static IReadOnlyList<int> Triangulate(
+    public static int[] Triangulate(
         ReadOnlySpan<double> data,
         ReadOnlySpan<int> holeIndices = default,
         int dim = 2)
@@ -43,14 +42,14 @@ public static class Earcut
 
         Node? outerNode = BuildLinkedList(data, 0, outerLen, dim, clockwise: true);
 
-        if (outerNode is null || outerNode.Next == outerNode.Prev)
+        if (outerNode is null || ReferenceEquals(outerNode.Next, outerNode.Prev))
         {
             return [];
         }
 
         // Pre-allocate: a simple polygon with V vertices produces at most V-2 triangles.
         int vertexCount = data.Length / dim;
-        var triangles = new List<int>(Math.Max(0, (vertexCount - 2) * 3));
+        var triangles = new TriangleList(Math.Max(0, (vertexCount - 2) * 3));
 
         if (hasHoles)
         {
@@ -84,7 +83,7 @@ public static class Earcut
 
         EarcutLinked(outerNode, triangles, dim, minX, minY, invSize, pass: 0);
 
-        return triangles;
+        return triangles.ToArray();
     }
 
     /// <summary>
@@ -206,7 +205,7 @@ public static class Earcut
             }
         }
 
-        if (last is not null && CoordsEqual(last, last.Next!))
+        if (last is not null && last == last.Next!)
         {
             RemoveNode(last);
             last = last.Next;
@@ -233,11 +232,11 @@ public static class Earcut
             again = false;
 
             if (!p.Steiner &&
-                (CoordsEqual(p, p.Next!) || Area(p.Prev!, p, p.Next!) == 0.0))
+                (p == p.Next! || Area(p.Prev!, p, p.Next!) == 0.0))
             {
                 RemoveNode(p);
                 p = end = p.Prev!;
-                if (p == p.Next)
+                if (ReferenceEquals(p, p.Next))
                 {
                     break;
                 }
@@ -249,7 +248,7 @@ public static class Earcut
                 p = p.Next!;
             }
         }
-        while (again || p != end);
+        while (again || !ReferenceEquals(p, end));
 
         return end;
     }
@@ -260,7 +259,7 @@ public static class Earcut
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void EarcutLinked(
         Node? ear,
-        List<int> triangles,
+        TriangleList triangles,
         int dim,
         double minX,
         double minY,
@@ -279,7 +278,7 @@ public static class Earcut
 
         Node stop = ear;
 
-        while (ear!.Prev != ear.Next)
+        while (!ReferenceEquals(ear!.Prev, ear.Next))
         {
             Node prev = ear.Prev!;
             Node next = ear.Next!;
@@ -289,12 +288,7 @@ public static class Earcut
                 : IsEar(ear))
             {
                 // Emit triangle.
-                int count = triangles.Count;
-                CollectionsMarshal.SetCount(triangles, count + 3);
-                Span<int> triSpan = CollectionsMarshal.AsSpan(triangles);
-                triSpan[count] = prev.I;
-                triSpan[count + 1] = ear.I;
-                triSpan[count + 2] = next.I;
+                triangles.Add(prev.I, ear.I, next.I);
 
                 RemoveNode(ear);
 
@@ -306,7 +300,7 @@ public static class Earcut
 
             ear = next;
 
-            if (ear == stop)
+            if (ReferenceEquals(ear, stop))
             {
                 switch (pass)
                 {
@@ -357,7 +351,7 @@ public static class Earcut
 
         Node p = c.Next!;
 
-        while (p != a)
+        while (!ReferenceEquals(p, a))
         {
             if (p.X >= x0 && p.X <= x1 &&
                 p.Y >= y0 && p.Y <= y1 &&
@@ -409,7 +403,7 @@ public static class Earcut
                n is not null && n.Z <= maxZ)
         {
             if (p.X >= x0 && p.X <= x1 && p.Y >= y0 && p.Y <= y1 &&
-                p != a && p != c &&
+                !ReferenceEquals(p, a) && !ReferenceEquals(p, c) &&
                 PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, p.X, p.Y) &&
                 Area(p.Prev!, p, p.Next!) >= 0.0)
             {
@@ -419,7 +413,7 @@ public static class Earcut
             p = p.PrevZ;
 
             if (n.X >= x0 && n.X <= x1 && n.Y >= y0 && n.Y <= y1 &&
-                n != a && n != c &&
+                !ReferenceEquals(n, a) && !ReferenceEquals(n, c) &&
                 PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, n.X, n.Y) &&
                 Area(n.Prev!, n, n.Next!) >= 0.0)
             {
@@ -432,7 +426,7 @@ public static class Earcut
         while (p is not null && p.Z >= minZ)
         {
             if (p.X >= x0 && p.X <= x1 && p.Y >= y0 && p.Y <= y1 &&
-                p != a && p != c &&
+                !ReferenceEquals(p, a) && !ReferenceEquals(p, c) &&
                 PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, p.X, p.Y) &&
                 Area(p.Prev!, p, p.Next!) >= 0.0)
             {
@@ -445,7 +439,7 @@ public static class Earcut
         while (n is not null && n.Z <= maxZ)
         {
             if (n.X >= x0 && n.X <= x1 && n.Y >= y0 && n.Y <= y1 &&
-                n != a && n != c &&
+                !ReferenceEquals(n, a) && !ReferenceEquals(n, c) &&
                 PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, n.X, n.Y) &&
                 Area(n.Prev!, n, n.Next!) >= 0.0)
             {
@@ -464,7 +458,7 @@ public static class Earcut
     /// Walks the polygon and fixes small local self-intersections by
     /// emitting a triangle at each crossing.
     /// </summary>
-    private static Node CureLocalIntersections(Node start, List<int> triangles)
+    private static Node CureLocalIntersections(Node start, TriangleList triangles)
     {
         Node p = start;
 
@@ -473,17 +467,12 @@ public static class Earcut
             Node a = p.Prev!;
             Node b = p.Next!.Next!;
 
-            if (!CoordsEqual(a, b) &&
+            if (a != b &&
                 Intersects(a, p, p.Next!, b) &&
                 LocallyInside(a, b) &&
                 LocallyInside(b, a))
             {
-                int count = triangles.Count;
-                CollectionsMarshal.SetCount(triangles, count + 3);
-                Span<int> triSpan = CollectionsMarshal.AsSpan(triangles);
-                triSpan[count] = a.I;
-                triSpan[count + 1] = p.I;
-                triSpan[count + 2] = b.I;
+                triangles.Add(a.I, p.I, b.I);
 
                 RemoveNode(p);
                 RemoveNode(p.Next!);
@@ -493,7 +482,7 @@ public static class Earcut
 
             p = p.Next!;
         }
-        while (p != start);
+        while (!ReferenceEquals(p, start));
 
         return FilterPoints(p)!;
     }
@@ -504,7 +493,7 @@ public static class Earcut
     /// </summary>
     private static void SplitEarcut(
         Node start,
-        List<int> triangles,
+        TriangleList triangles,
         int dim,
         double minX,
         double minY,
@@ -516,7 +505,7 @@ public static class Earcut
         {
             Node b = a.Next!.Next!;
 
-            while (b != a.Prev)
+            while (!ReferenceEquals(b, a.Prev))
             {
                 if (a.I != b.I && IsValidDiagonal(a, b))
                 {
@@ -535,7 +524,7 @@ public static class Earcut
 
             a = a.Next!;
         }
-        while (a != start);
+        while (!ReferenceEquals(a, start));
     }
 
     // ────────────────────────── hole elimination ───────────────────────────
@@ -550,7 +539,8 @@ public static class Earcut
         Node outerNode,
         int dim)
     {
-        var queue = new List<Node>(holeIndices.Length);
+        var queue = new Node[holeIndices.Length];
+        int queueCount = 0;
 
         for (int i = 0; i < holeIndices.Length; i++)
         {
@@ -563,16 +553,16 @@ public static class Earcut
 
             if (list is not null)
             {
-                if (list == list.Next)
+                if (ReferenceEquals(list, list.Next))
                 {
                     list.Steiner = true;
                 }
 
-                queue.Add(GetLeftmost(list));
+                queue[queueCount++] = GetLeftmost(list);
             }
         }
 
-        queue.Sort(static (a, b) =>
+        queue.AsSpan(0, queueCount).Sort(static (a, b) =>
         {
             int cmp = a.X.CompareTo(b.X);
             if (cmp != 0)
@@ -591,9 +581,9 @@ public static class Earcut
             return aSlope.CompareTo(bSlope);
         });
 
-        foreach (Node hole in queue)
+        for (int i = 0; i < queueCount; i++)
         {
-            outerNode = EliminateHole(hole, outerNode);
+            outerNode = EliminateHole(queue[i], outerNode);
         }
 
         return outerNode;
@@ -625,14 +615,14 @@ public static class Earcut
         double qx = double.NegativeInfinity;
         Node? m = null;
 
-        if (CoordsEqual(hole, p))
+        if (hole == p)
         {
             return p;
         }
 
         do
         {
-            if (CoordsEqual(hole, p.Next!))
+            if (hole == p.Next!)
             {
                 return p.Next;
             }
@@ -654,7 +644,7 @@ public static class Earcut
 
             p = p.Next!;
         }
-        while (p != outerNode);
+        while (!ReferenceEquals(p, outerNode));
 
         if (m is null)
         {
@@ -691,7 +681,7 @@ public static class Earcut
 
             p = p.Next!;
         }
-        while (p != stop);
+        while (!ReferenceEquals(p, stop));
 
         return m;
     }
@@ -718,7 +708,7 @@ public static class Earcut
             p.NextZ = p.Next;
             p = p.Next!;
         }
-        while (p != start);
+        while (!ReferenceEquals(p, start));
 
         p.PrevZ!.NextZ = null;
         p.PrevZ = null;
@@ -836,11 +826,6 @@ public static class Earcut
     private static double Area(Node p, Node q, Node r) =>
         (q.Y - p.Y) * (r.X - q.X) - (q.X - p.X) * (r.Y - q.Y);
 
-    /// <summary>Coordinate equality (not reference equality).</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool CoordsEqual(Node a, Node b) =>
-        a.X == b.X && a.Y == b.Y;
-
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool PointInTriangle(
         double ax, double ay,
@@ -870,7 +855,7 @@ public static class Earcut
         !IntersectsPolygon(a, b) &&
         (LocallyInside(a, b) && LocallyInside(b, a) && MiddleInside(a, b) &&
          (Area(a.Prev, a, b.Prev!) != 0.0 || Area(a, b.Prev!, b) != 0.0) ||
-         CoordsEqual(a, b) &&
+         a == b &&
          Area(a.Prev, a, a.Next) > 0.0 &&
          Area(b.Prev!, b, b.Next!) > 0.0);
 
@@ -909,7 +894,7 @@ public static class Earcut
 
             p = p.Next!;
         }
-        while (p != a);
+        while (!ReferenceEquals(p, a));
 
         return false;
     }
@@ -938,7 +923,7 @@ public static class Earcut
 
             p = p.Next;
         }
-        while (p != a);
+        while (!ReferenceEquals(p, a));
 
         return inside;
     }
@@ -958,7 +943,7 @@ public static class Earcut
 
             p = p.Next!;
         }
-        while (p != start);
+        while (!ReferenceEquals(p, start));
 
         return leftmost;
     }
@@ -1047,12 +1032,39 @@ public static class Earcut
             ? (a > c ? a : c)
             : (b > c ? b : c);
 
+    // ─────────────────────── triangle accumulator ──────────────────────────
+
+    /// <summary>
+    /// Growable <see langword="int[]"/>-backed buffer for accumulating triangle indices.
+    /// </summary>
+    private sealed class TriangleList(int capacity)
+    {
+        private int[] _buffer = capacity > 0 ? new int[capacity] : [];
+        private int _count;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Add(int a, int b, int c)
+        {
+            if (_count + 3 > _buffer.Length)
+            {
+                Array.Resize(ref _buffer, Math.Max(_buffer.Length * 2, _count + 3));
+            }
+
+            _buffer[_count] = a;
+            _buffer[_count + 1] = b;
+            _buffer[_count + 2] = c;
+            _count += 3;
+        }
+
+        public int[] ToArray() => _count == _buffer.Length ? _buffer : _buffer[.._count];
+    }
+
     // ──────────────────────────── node type ────────────────────────────────
 
     /// <summary>
     /// Vertex node in the circular doubly-linked polygon ring.
     /// </summary>
-    private sealed class Node(int i, double x, double y)
+    private sealed class Node(int i, double x, double y) : IEquatable<Node>
     {
         public int I { get; } = i;          // vertex index in the coordinate array
 
@@ -1071,5 +1083,19 @@ public static class Earcut
         public Node? NextZ { get; set; }    // next node in z-order
 
         public bool Steiner { get; set; }   // is this a Steiner point?
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool Equals(Node? other) => other is not null && X == other.X && Y == other.Y;
+
+        public override bool Equals(object? obj) => obj is Node other && Equals(other);
+
+        public override int GetHashCode() => HashCode.Combine(X, Y);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool operator ==(Node? left, Node? right) =>
+            left is null ? right is null : left.Equals(right);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool operator !=(Node? left, Node? right) => !(left == right);
     }
 }
