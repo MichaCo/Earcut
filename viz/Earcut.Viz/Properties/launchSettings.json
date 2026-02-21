@@ -1,0 +1,192 @@
+{
+  "profiles": {
+    "bad-diagonals": {
+      "commandName": "Project",
+      "commandLineArgs": "bad-diagonals"
+    },
+    "bad-hole": {
+      "commandName": "Project",
+      "commandLineArgs": "bad-hole"
+    },
+    "boxy": {
+      "commandName": "Project",
+      "commandLineArgs": "boxy"
+    },
+    "building": {
+      "commandName": "Project",
+      "commandLineArgs": "building"
+    },
+    "collinear-diagonal": {
+      "commandName": "Project",
+      "commandLineArgs": "collinear-diagonal"
+    },
+    "dude": {
+      "commandName": "Project",
+      "commandLineArgs": "dude"
+    },
+    "eberly-3": {
+      "commandName": "Project",
+      "commandLineArgs": "eberly-3"
+    },
+    "eberly-6": {
+      "commandName": "Project",
+      "commandLineArgs": "eberly-6"
+    },
+    "filtered-bridge-jhl": {
+      "commandName": "Project",
+      "commandLineArgs": "filtered-bridge-jhl"
+    },
+    "hilbert": {
+      "commandName": "Project",
+      "commandLineArgs": "hilbert"
+    },
+    "hole-touching-outer": {
+      "commandName": "Project",
+      "commandLineArgs": "hole-touching-outer"
+    },
+    "hourglass": {
+      "commandName": "Project",
+      "commandLineArgs": "hourglass"
+    },
+    "issue111": {
+      "commandName": "Project",
+      "commandLineArgs": "issue111"
+    },
+    "issue119": {
+      "commandName": "Project",
+      "commandLineArgs": "issue119"
+    },
+    "issue131": {
+      "commandName": "Project",
+      "commandLineArgs": "issue131"
+    },
+    "issue142": {
+      "commandName": "Project",
+      "commandLineArgs": "issue142"
+    },
+    "issue149": {
+      "commandName": "Project",
+      "commandLineArgs": "issue149"
+    },
+    "issue16": {
+      "commandName": "Project",
+      "commandLineArgs": "issue16"
+    },
+    "issue17": {
+      "commandName": "Project",
+      "commandLineArgs": "issue17"
+    },
+    "issue186": {
+      "commandName": "Project",
+      "commandLineArgs": "issue186"
+    },
+    "issue29": {
+      "commandName": "Project",
+      "commandLineArgs": "issue29"
+    },
+    "issue34": {
+      "commandName": "Project",
+      "commandLineArgs": "issue34"
+    },
+    "issue35": {
+      "commandName": "Project",
+      "commandLineArgs": "issue35"
+    },
+    "issue45": {
+      "commandName": "Project",
+      "commandLineArgs": "issue45"
+    },
+    "issue52": {
+      "commandName": "Project",
+      "commandLineArgs": "issue52"
+    },
+    "outside-ring": {
+      "commandName": "Project",
+      "commandLineArgs": "outside-ring"
+    },
+    "rain": {
+      "commandName": "Project",
+      "commandLineArgs": "rain"
+    },
+    "self-touching": {
+      "commandName": "Project",
+      "commandLineArgs": "self-touching"
+    },
+    "shared-points": {
+      "commandName": "Project",
+      "commandLineArgs": "shared-points"
+    },
+    "simplified-us-border": {
+      "commandName": "Project",
+      "commandLineArgs": "simplified-us-border"
+    },
+    "steiner": {
+      "commandName": "Project",
+      "commandLineArgs": "steiner"
+    },
+    "touching-holes": {
+      "commandName": "Project",
+      "commandLineArgs": "touching-holes"
+    },
+    "touching-holes2": {
+      "commandName": "Project",
+      "commandLineArgs": "touching-holes2"
+    },
+    "touching-holes3": {
+      "commandName": "Project",
+      "commandLineArgs": "touching-holes3"
+    },
+    "touching-holes4": {
+      "commandName": "Project",
+      "commandLineArgs": "touching-holes4"
+    },
+    "touching-holes5": {
+      "commandName": "Project",
+      "commandLineArgs": "touching-holes5"
+    },
+    "touching-holes6": {
+      "commandName": "Project",
+      "commandLineArgs": "touching-holes6"
+    },
+    "touching2": {
+      "commandName": "Project",
+      "commandLineArgs": "touching2"
+    },
+    "touching3": {
+      "commandName": "Project",
+      "commandLineArgs": "touching3"
+    },
+    "touching4": {
+      "commandName": "Project",
+      "commandLineArgs": "touching4"
+    },
+    "water": {
+      "commandName": "Project",
+      "commandLineArgs": "water"
+    },
+    "water-huge": {
+      "commandName": "Project",
+      "commandLineArgs": "water-huge"
+    },
+    "water-huge2": {
+      "commandName": "Project",
+      "commandLineArgs": "water-huge2"
+    },
+    "water2": {
+      "commandName": "Project",
+      "commandLineArgs": "water2"
+    },
+    "water3": {
+      "commandName": "Project",
+      "commandLineArgs": "water3"
+    },
+    "water3b": {
+      "commandName": "Project",
+      "commandLineArgs": "water3b"
+    },
+    "water4": {
+      "commandName": "Project",
+      "commandLineArgs": "water4"
+    }
+  }
+}
