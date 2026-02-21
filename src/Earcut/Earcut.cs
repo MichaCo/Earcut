@@ -303,17 +303,23 @@ public static class Earcut
 
         int stop = ear;
 
-        while (pool[ear].Prev != pool[ear].Next)
+        while (true)
         {
-            int prev = pool[ear].Prev;
-            int next = pool[ear].Next;
+            ref NodeData earData = ref pool[ear];
+            int prev = earData.Prev;
+            int next = earData.Next;
+
+            if (prev == next)
+            {
+                break;
+            }
 
             if (invSize != 0.0
                 ? IsEarHashed(ear, minX, minY, invSize, ref pool)
                 : IsEar(ear, ref pool))
             {
                 // Emit triangle.
-                triangles.Add(pool[prev].I, pool[ear].I, pool[next].I);
+                triangles.Add(pool[prev].I, earData.I, pool[next].I);
 
                 RemoveNode(ear, ref pool);
 
@@ -378,15 +384,16 @@ public static class Earcut
 
         while (p != a)
         {
-            if (pool[p].X >= x0 && pool[p].X <= x1 &&
-                pool[p].Y >= y0 && pool[p].Y <= y1 &&
-                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pool[p].X, pool[p].Y) &&
-                Area(pool[p].Prev, p, pool[p].Next, ref pool) >= 0.0)
+            ref NodeData pData = ref pool[p];
+            if (pData.X >= x0 && pData.X <= x1 &&
+                pData.Y >= y0 && pData.Y <= y1 &&
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pData.X, pData.Y) &&
+                Area(ref pool[pData.Prev], ref pData, ref pool[pData.Next]) >= 0.0)
             {
                 return false;
             }
 
-            p = pool[p].Next;
+            p = pData.Next;
         }
 
         return true;
@@ -401,18 +408,20 @@ public static class Earcut
         double invSize,
         ref NodePool pool)
     {
-        int a = pool[ear].Prev;
+        // Cache pool[ear] once — it is accessed for Prev, Next, PrevZ, NextZ, X, Y below.
+        ref NodeData earData = ref pool[ear];
+        int a = earData.Prev;
         int b = ear;
-        int c = pool[ear].Next;
+        int c = earData.Next;
 
-        if (Area(a, b, c, ref pool) >= 0.0)
+        if (Area(ref pool[a], ref earData, ref pool[c]) >= 0.0)
         {
             return false;
         }
 
         double ax = pool[a].X, ay = pool[a].Y;
-        double bx = pool[b].X, by = pool[b].Y;
-        double cx = pool[c].X, cy = pool[c].Y;
+        double bx = earData.X,  by = earData.Y;
+        double cx = pool[c].X,  cy = pool[c].Y;
 
         double x0 = Min3(ax, bx, cx);
         double y0 = Min3(ay, by, cy);
@@ -422,57 +431,61 @@ public static class Earcut
         int minZ = ZOrder(x0, y0, minX, minY, invSize);
         int maxZ = ZOrder(x1, y1, minX, minY, invSize);
 
-        int p = pool[ear].PrevZ;
-        int n = pool[ear].NextZ;
+        int p = earData.PrevZ;
+        int n = earData.NextZ;
 
         while (p != -1 && pool[p].Z >= minZ &&
                n != -1 && pool[n].Z <= maxZ)
         {
-            if (pool[p].X >= x0 && pool[p].X <= x1 && pool[p].Y >= y0 && pool[p].Y <= y1 &&
+            ref NodeData pData = ref pool[p];
+            if (pData.X >= x0 && pData.X <= x1 && pData.Y >= y0 && pData.Y <= y1 &&
                 p != a && p != c &&
-                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pool[p].X, pool[p].Y) &&
-                Area(pool[p].Prev, p, pool[p].Next, ref pool) >= 0.0)
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pData.X, pData.Y) &&
+                Area(ref pool[pData.Prev], ref pData, ref pool[pData.Next]) >= 0.0)
             {
                 return false;
             }
 
-            p = pool[p].PrevZ;
+            p = pData.PrevZ;
 
-            if (pool[n].X >= x0 && pool[n].X <= x1 && pool[n].Y >= y0 && pool[n].Y <= y1 &&
+            ref NodeData nData = ref pool[n];
+            if (nData.X >= x0 && nData.X <= x1 && nData.Y >= y0 && nData.Y <= y1 &&
                 n != a && n != c &&
-                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pool[n].X, pool[n].Y) &&
-                Area(pool[n].Prev, n, pool[n].Next, ref pool) >= 0.0)
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, nData.X, nData.Y) &&
+                Area(ref pool[nData.Prev], ref nData, ref pool[nData.Next]) >= 0.0)
             {
                 return false;
             }
 
-            n = pool[n].NextZ;
+            n = nData.NextZ;
         }
 
         while (p != -1 && pool[p].Z >= minZ)
         {
-            if (pool[p].X >= x0 && pool[p].X <= x1 && pool[p].Y >= y0 && pool[p].Y <= y1 &&
+            ref NodeData pData = ref pool[p];
+            if (pData.X >= x0 && pData.X <= x1 && pData.Y >= y0 && pData.Y <= y1 &&
                 p != a && p != c &&
-                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pool[p].X, pool[p].Y) &&
-                Area(pool[p].Prev, p, pool[p].Next, ref pool) >= 0.0)
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pData.X, pData.Y) &&
+                Area(ref pool[pData.Prev], ref pData, ref pool[pData.Next]) >= 0.0)
             {
                 return false;
             }
 
-            p = pool[p].PrevZ;
+            p = pData.PrevZ;
         }
 
         while (n != -1 && pool[n].Z <= maxZ)
         {
-            if (pool[n].X >= x0 && pool[n].X <= x1 && pool[n].Y >= y0 && pool[n].Y <= y1 &&
+            ref NodeData nData = ref pool[n];
+            if (nData.X >= x0 && nData.X <= x1 && nData.Y >= y0 && nData.Y <= y1 &&
                 n != a && n != c &&
-                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pool[n].X, pool[n].Y) &&
-                Area(pool[n].Prev, n, pool[n].Next, ref pool) >= 0.0)
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, nData.X, nData.Y) &&
+                Area(ref pool[nData.Prev], ref nData, ref pool[nData.Next]) >= 0.0)
             {
                 return false;
             }
 
-            n = pool[n].NextZ;
+            n = nData.NextZ;
         }
 
         return true;
@@ -878,6 +891,11 @@ public static class Earcut
         (pool[q].Y - pool[p].Y) * (pool[r].X - pool[q].X) -
         (pool[q].X - pool[p].X) * (pool[r].Y - pool[q].Y);
 
+    /// <summary>Signed area of triangle (p → q → r) using pre-fetched node refs.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double Area(ref NodeData p, ref NodeData q, ref NodeData r) =>
+        (q.Y - p.Y) * (r.X - q.X) - (q.X - p.X) * (r.Y - q.Y);
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool PointInTriangle(
         double ax, double ay,
@@ -1129,13 +1147,11 @@ public static class Earcut
     /// </summary>
     /// <remarks>
     /// Fields are ordered with the two <see langword="double"/> coordinates
-    /// first to avoid 4 bytes of implicit padding before them.
-    /// <see cref="LayoutKind.Sequential"/> with <c>Size = 64</c> pads the
-    /// struct to exactly one CPU cache line (64 bytes), which lets the JIT
-    /// replace the array-stride multiply <c>idx * 64</c> with a cheap bit
-    /// shift <c>idx &lt;&lt; 6</c> in every hot-loop access.
+    /// first to avoid the 4-byte implicit padding gap that would appear
+    /// before them if <c>I</c> were first.  The natural aligned size is
+    /// 48 bytes (16 B doubles + 24 B ints + 1 B bool + 7 B padding).
     /// </remarks>
-    [StructLayout(LayoutKind.Sequential, Size = 64)]
+    [StructLayout(LayoutKind.Sequential)]
     private struct NodeData
     {
         public double X;        // X coordinate
@@ -1147,7 +1163,6 @@ public static class Earcut
         public int    PrevZ;    // index of previous node in z-order (-1 = none)
         public int    NextZ;    // index of next node in z-order     (-1 = none)
         public bool   Steiner;  // is this a Steiner point?
-        // 23 bytes implicit padding (Size = 64)
     }
 
     /// <summary>
