@@ -110,8 +110,11 @@ image.Mutate(ctx =>
     }
 
     // Draw polygon outline (all rings) in black
+    // Rings with fewer than 2 points (e.g. Steiner points) are skipped — a
+    // 1-point path produces no visible stroke, matching viz.js behaviour.
     foreach (double[][] ring in testPoints)
     {
+        if (ring.Length < 2) continue;
         var pts = ring.Select(pt => ToCanvas(pt, minX, minY, ratio)).ToArray();
         ctx.Draw(new DrawingOptions(), Color.Black, 1f, new Polygon(pts));
     }
