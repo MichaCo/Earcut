@@ -1127,18 +1127,27 @@ public static class Earcut
     /// Flat value-type representation of a vertex node.
     /// All link fields use -1 as the null sentinel.
     /// </summary>
-    [StructLayout(LayoutKind.Sequential)]
+    /// <remarks>
+    /// Fields are ordered with the two <see langword="double"/> coordinates
+    /// first to avoid 4 bytes of implicit padding before them.
+    /// <see cref="LayoutKind.Sequential"/> with <c>Size = 64</c> pads the
+    /// struct to exactly one CPU cache line (64 bytes), which lets the JIT
+    /// replace the array-stride multiply <c>idx * 64</c> with a cheap bit
+    /// shift <c>idx &lt;&lt; 6</c> in every hot-loop access.
+    /// </remarks>
+    [StructLayout(LayoutKind.Sequential, Size = 64)]
     private struct NodeData
     {
-        public int    I;        // vertex index in the coordinate array
         public double X;        // X coordinate
         public double Y;        // Y coordinate
+        public int    I;        // vertex index in the coordinate array
         public int    Prev;     // index of previous vertex in ring  (-1 = none)
         public int    Next;     // index of next vertex in ring      (-1 = none)
         public int    Z;        // z-order curve value
         public int    PrevZ;    // index of previous node in z-order (-1 = none)
         public int    NextZ;    // index of next node in z-order     (-1 = none)
         public bool   Steiner;  // is this a Steiner point?
+        // 23 bytes implicit padding (Size = 64)
     }
 
     /// <summary>
