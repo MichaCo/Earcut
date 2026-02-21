@@ -5,7 +5,6 @@
 
 using System.Buffers;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 [module: SkipLocalsInit]
 namespace EarcutDotNet;
@@ -52,7 +51,7 @@ public static class Earcut
         {
             int outerNode = BuildLinkedList(data, 0, outerLen, dim, clockwise: true, ref pool);
 
-            if (outerNode == -1 || pool[outerNode].Next == pool[outerNode].Prev)
+            if (outerNode == -1 || pool.Next[outerNode] == pool.Prev[outerNode])
             {
                 return [];
             }
@@ -221,8 +220,8 @@ public static class Earcut
 
         if (last != -1)
         {
-            int lastNext = pool[last].Next;
-            if (pool[last].X == pool[lastNext].X && pool[last].Y == pool[lastNext].Y)
+            int lastNext = pool.Next[last];
+            if (pool.X[last] == pool.X[lastNext] && pool.Y[last] == pool.Y[lastNext])
             {
                 RemoveNode(last, ref pool);
                 last = lastNext;
@@ -245,22 +244,26 @@ public static class Earcut
             end = start;
         }
 
+        double[] x = pool.X, y = pool.Y;
+        int[]    prev = pool.Prev, next = pool.Next;
+        bool[]   steiner = pool.Steiner;
+
         int p = start;
         bool again;
 
         do
         {
             again = false;
+            int pNext = next[p];
 
-            ref NodeData pNode = ref pool[p];
-            if (!pNode.Steiner &&
-                (pool[pNode.Next].X == pNode.X && pool[pNode.Next].Y == pNode.Y ||
-                 Area(pNode.Prev, p, pNode.Next, ref pool) == 0.0))
+            if (!steiner[p] &&
+                (x[pNext] == x[p] && y[pNext] == y[p] ||
+                 Area(x, y, prev[p], p, pNext) == 0.0))
             {
-                int pPrev = pNode.Prev;
+                int pPrev = prev[p];
                 RemoveNode(p, ref pool);
                 p = end = pPrev;
-                if (p == pool[p].Next)
+                if (p == next[p])
                 {
                     break;
                 }
@@ -269,7 +272,7 @@ public static class Earcut
             }
             else
             {
-                p = pNode.Next;
+                p = pNext;
             }
         }
         while (again || p != end);
@@ -301,15 +304,17 @@ public static class Earcut
             IndexCurve(ear, minX, minY, invSize, ref pool);
         }
 
+        int[]    prev = pool.Prev, next = pool.Next;
+        int[]    nodeI = pool.I;
+
         int stop = ear;
 
         while (true)
         {
-            ref NodeData earData = ref pool[ear];
-            int prev = earData.Prev;
-            int next = earData.Next;
+            int prev_ = prev[ear];
+            int next_ = next[ear];
 
-            if (prev == next)
+            if (prev_ == next_)
             {
                 break;
             }
@@ -319,17 +324,17 @@ public static class Earcut
                 : IsEar(ear, ref pool))
             {
                 // Emit triangle.
-                triangles.Add(pool[prev].I, earData.I, pool[next].I);
+                triangles.Add(nodeI[prev_], nodeI[ear], nodeI[next_]);
 
                 RemoveNode(ear, ref pool);
 
                 // Skip the next vertex — produces fewer sliver triangles.
-                ear = pool[next].Next;
-                stop = pool[next].Next;
+                ear = next[next_];
+                stop = next[next_];
                 continue;
             }
 
-            ear = next;
+            ear = next_;
 
             if (ear == stop)
             {
@@ -362,38 +367,41 @@ public static class Earcut
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static bool IsEar(int ear, ref NodePool pool)
     {
-        int a = pool[ear].Prev;
-        int b = ear;
-        int c = pool[ear].Next;
+        double[] x = pool.X, y = pool.Y;
+        int[]    prev = pool.Prev, next = pool.Next;
 
-        if (Area(a, b, c, ref pool) >= 0.0)
+        int a = prev[ear];
+        int c = next[ear];
+
+        if (Area(x, y, a, ear, c) >= 0.0)
         {
             return false;
         }
 
-        double ax = pool[a].X, ay = pool[a].Y;
-        double bx = pool[b].X, by = pool[b].Y;
-        double cx = pool[c].X, cy = pool[c].Y;
+        double ax = x[a], ay = y[a];
+        double bx = x[ear], by = y[ear];
+        double cx = x[c], cy = y[c];
 
         double x0 = Min3(ax, bx, cx);
         double y0 = Min3(ay, by, cy);
         double x1 = Max3(ax, bx, cx);
         double y1 = Max3(ay, by, cy);
 
-        int p = pool[c].Next;
+        int p = next[c];
 
         while (p != a)
         {
-            ref NodeData pData = ref pool[p];
-            if (pData.X >= x0 && pData.X <= x1 &&
-                pData.Y >= y0 && pData.Y <= y1 &&
-                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pData.X, pData.Y) &&
-                Area(ref pool[pData.Prev], ref pData, ref pool[pData.Next]) >= 0.0)
+            double px = x[p], py = y[p];
+
+            if (px >= x0 && px <= x1 &&
+                py >= y0 && py <= y1 &&
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, px, py) &&
+                Area(x, y, prev[p], p, next[p]) >= 0.0)
             {
                 return false;
             }
 
-            p = pData.Next;
+            p = next[p];
         }
 
         return true;
@@ -408,20 +416,22 @@ public static class Earcut
         double invSize,
         ref NodePool pool)
     {
-        // Cache pool[ear] once — it is accessed for Prev, Next, PrevZ, NextZ, X, Y below.
-        ref NodeData earData = ref pool[ear];
-        int a = earData.Prev;
-        int b = ear;
-        int c = earData.Next;
+        // Cache array refs as locals so the JIT can keep them in registers.
+        double[] x     = pool.X,    y     = pool.Y;
+        int[]    prev  = pool.Prev, next  = pool.Next;
+        int[]    z     = pool.Z,    prevZ = pool.PrevZ, nextZ = pool.NextZ;
 
-        if (Area(ref pool[a], ref earData, ref pool[c]) >= 0.0)
+        int a = prev[ear];
+        int c = next[ear];
+
+        if (Area(x, y, a, ear, c) >= 0.0)
         {
             return false;
         }
 
-        double ax = pool[a].X, ay = pool[a].Y;
-        double bx = earData.X,  by = earData.Y;
-        double cx = pool[c].X,  cy = pool[c].Y;
+        double ax = x[a], ay = y[a];
+        double bx = x[ear], by = y[ear];
+        double cx = x[c], cy = y[c];
 
         double x0 = Min3(ax, bx, cx);
         double y0 = Min3(ay, by, cy);
@@ -431,61 +441,61 @@ public static class Earcut
         int minZ = ZOrder(x0, y0, minX, minY, invSize);
         int maxZ = ZOrder(x1, y1, minX, minY, invSize);
 
-        int p = earData.PrevZ;
-        int n = earData.NextZ;
+        int p = prevZ[ear];
+        int n = nextZ[ear];
 
-        while (p != -1 && pool[p].Z >= minZ &&
-               n != -1 && pool[n].Z <= maxZ)
+        while (p != -1 && z[p] >= minZ &&
+               n != -1 && z[n] <= maxZ)
         {
-            ref NodeData pData = ref pool[p];
-            if (pData.X >= x0 && pData.X <= x1 && pData.Y >= y0 && pData.Y <= y1 &&
+            double px = x[p], py = y[p];
+            if (px >= x0 && px <= x1 && py >= y0 && py <= y1 &&
                 p != a && p != c &&
-                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pData.X, pData.Y) &&
-                Area(ref pool[pData.Prev], ref pData, ref pool[pData.Next]) >= 0.0)
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, px, py) &&
+                Area(x, y, prev[p], p, next[p]) >= 0.0)
             {
                 return false;
             }
 
-            p = pData.PrevZ;
+            p = prevZ[p];
 
-            ref NodeData nData = ref pool[n];
-            if (nData.X >= x0 && nData.X <= x1 && nData.Y >= y0 && nData.Y <= y1 &&
+            double nx = x[n], ny = y[n];
+            if (nx >= x0 && nx <= x1 && ny >= y0 && ny <= y1 &&
                 n != a && n != c &&
-                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, nData.X, nData.Y) &&
-                Area(ref pool[nData.Prev], ref nData, ref pool[nData.Next]) >= 0.0)
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, nx, ny) &&
+                Area(x, y, prev[n], n, next[n]) >= 0.0)
             {
                 return false;
             }
 
-            n = nData.NextZ;
+            n = nextZ[n];
         }
 
-        while (p != -1 && pool[p].Z >= minZ)
+        while (p != -1 && z[p] >= minZ)
         {
-            ref NodeData pData = ref pool[p];
-            if (pData.X >= x0 && pData.X <= x1 && pData.Y >= y0 && pData.Y <= y1 &&
+            double px = x[p], py = y[p];
+            if (px >= x0 && px <= x1 && py >= y0 && py <= y1 &&
                 p != a && p != c &&
-                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, pData.X, pData.Y) &&
-                Area(ref pool[pData.Prev], ref pData, ref pool[pData.Next]) >= 0.0)
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, px, py) &&
+                Area(x, y, prev[p], p, next[p]) >= 0.0)
             {
                 return false;
             }
 
-            p = pData.PrevZ;
+            p = prevZ[p];
         }
 
-        while (n != -1 && pool[n].Z <= maxZ)
+        while (n != -1 && z[n] <= maxZ)
         {
-            ref NodeData nData = ref pool[n];
-            if (nData.X >= x0 && nData.X <= x1 && nData.Y >= y0 && nData.Y <= y1 &&
+            double nx = x[n], ny = y[n];
+            if (nx >= x0 && nx <= x1 && ny >= y0 && ny <= y1 &&
                 n != a && n != c &&
-                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, nData.X, nData.Y) &&
-                Area(ref pool[nData.Prev], ref nData, ref pool[nData.Next]) >= 0.0)
+                PointInTriangleExceptFirst(ax, ay, bx, by, cx, cy, nx, ny) &&
+                Area(x, y, prev[n], n, next[n]) >= 0.0)
             {
                 return false;
             }
 
-            n = nData.NextZ;
+            n = nextZ[n];
         }
 
         return true;
@@ -499,20 +509,23 @@ public static class Earcut
     /// </summary>
     private static int CureLocalIntersections(int start, TriangleList triangles, ref NodePool pool)
     {
+        double[] x = pool.X, y = pool.Y;
+        int[]    nodeI = pool.I, prev = pool.Prev, next = pool.Next;
+
         int p = start;
 
         do
         {
-            int a = pool[p].Prev;
-            int pNext = pool[p].Next;
-            int b = pool[pNext].Next;
+            int a     = prev[p];
+            int pNext = next[p];
+            int b     = next[pNext];
 
-            if (!(pool[a].X == pool[b].X && pool[a].Y == pool[b].Y) &&
+            if (!(x[a] == x[b] && y[a] == y[b]) &&
                 Intersects(a, p, pNext, b, ref pool) &&
                 LocallyInside(a, b, ref pool) &&
                 LocallyInside(b, a, ref pool))
             {
-                triangles.Add(pool[a].I, pool[p].I, pool[b].I);
+                triangles.Add(nodeI[a], nodeI[p], nodeI[b]);
 
                 RemoveNode(p, ref pool);
                 RemoveNode(pNext, ref pool);
@@ -520,7 +533,7 @@ public static class Earcut
                 p = start = b;
             }
 
-            p = pool[p].Next;
+            p = next[p];
         }
         while (p != start);
 
@@ -540,30 +553,32 @@ public static class Earcut
         double invSize,
         ref NodePool pool)
     {
+        int[] prev = pool.Prev, next = pool.Next;
+
         int a = start;
 
         do
         {
-            int b = pool[pool[a].Next].Next;
+            int b = next[next[a]];
 
-            while (b != pool[a].Prev)
+            while (b != prev[a])
             {
-                if (pool[a].I != pool[b].I && IsValidDiagonal(a, b, ref pool))
+                if (pool.I[a] != pool.I[b] && IsValidDiagonal(a, b, ref pool))
                 {
                     int c = SplitPolygon(a, b, ref pool);
 
-                    a = FilterPoints(a, ref pool, pool[a].Next);
-                    c = FilterPoints(c, ref pool, pool[c].Next);
+                    a = FilterPoints(a, ref pool, next[a]);
+                    c = FilterPoints(c, ref pool, next[c]);
 
                     EarcutLinked(a, triangles, dim, minX, minY, invSize, pass: 0, ref pool);
                     EarcutLinked(c, triangles, dim, minX, minY, invSize, pass: 0, ref pool);
                     return;
                 }
 
-                b = pool[b].Next;
+                b = next[b];
             }
 
-            a = pool[a].Next;
+            a = next[a];
         }
         while (a != start);
     }
@@ -582,7 +597,9 @@ public static class Earcut
         ref NodePool pool)
     {
         int queueCount = holeIndices.Length;
-        int[]? rentedQueue = queueCount > StackAllocHoleThreshold ? ArrayPool<int>.Shared.Rent(queueCount) : null;
+        int[]? rentedQueue = queueCount > StackAllocHoleThreshold
+            ? ArrayPool<int>.Shared.Rent(queueCount)
+            : null;
         Span<int> queue = rentedQueue != null
             ? rentedQueue.AsSpan(0, queueCount)
             : stackalloc int[queueCount];
@@ -600,9 +617,9 @@ public static class Earcut
 
             if (list != -1)
             {
-                if (list == pool[list].Next)
+                if (list == pool.Next[list])
                 {
-                    pool[list].Steiner = true;
+                    pool.Steiner[list] = true;
                 }
 
                 queue[actualQueueCount++] = GetLeftmost(list, ref pool);
@@ -610,28 +627,26 @@ public static class Earcut
         }
 
         // Sort holes by leftmost point X (then Y, then slope) so we process
-        // left-to-right. Capture pool by value so the lambda can read node
-        // coordinates without a ref parameter. The copy shares the same
-        // backing array as the original and is never written to during the sort.
-        NodePool poolSnap = pool;
+        // left-to-right. Capture array refs (reference types) rather than
+        // copying the pool struct.
+        double[] snapX = pool.X, snapY = pool.Y;
+        int[]    snapNext = pool.Next;
         queue[..actualQueueCount].Sort((a, b) =>
         {
-            int cmp = poolSnap[a].X.CompareTo(poolSnap[b].X);
+            int cmp = snapX[a].CompareTo(snapX[b]);
             if (cmp != 0)
             {
                 return cmp;
             }
 
-            cmp = poolSnap[a].Y.CompareTo(poolSnap[b].Y);
+            cmp = snapY[a].CompareTo(snapY[b]);
             if (cmp != 0)
             {
                 return cmp;
             }
 
-            double aSlope = (poolSnap[poolSnap[a].Next].Y - poolSnap[a].Y) /
-                            (poolSnap[poolSnap[a].Next].X - poolSnap[a].X);
-            double bSlope = (poolSnap[poolSnap[b].Next].Y - poolSnap[b].Y) /
-                            (poolSnap[poolSnap[b].Next].X - poolSnap[b].X);
+            double aSlope = (snapY[snapNext[a]] - snapY[a]) / (snapX[snapNext[a]] - snapX[a]);
+            double bSlope = (snapY[snapNext[b]] - snapY[b]) / (snapX[snapNext[b]] - snapX[b]);
             return aSlope.CompareTo(bSlope);
         });
 
@@ -658,8 +673,8 @@ public static class Earcut
         }
 
         int bridgeReverse = SplitPolygon(bridge, hole, ref pool);
-        FilterPoints(bridgeReverse, ref pool, pool[bridgeReverse].Next);
-        return FilterPoints(bridge, ref pool, pool[bridge].Next);
+        FilterPoints(bridgeReverse, ref pool, pool.Next[bridgeReverse]);
+        return FilterPoints(bridge, ref pool, pool.Next[bridge]);
     }
 
     /// <summary>
@@ -668,42 +683,45 @@ public static class Earcut
     /// </summary>
     private static int FindHoleBridge(int hole, int outerNode, ref NodePool pool)
     {
-        int p = outerNode;
-        double hx = pool[hole].X;
-        double hy = pool[hole].Y;
-        double qx = double.NegativeInfinity;
-        int m = -1;
+        double[] x = pool.X, y = pool.Y;
+        int[]    next = pool.Next;
 
-        if (pool[hole].X == pool[p].X && pool[hole].Y == pool[p].Y)
+        int    p  = outerNode;
+        double hx = x[hole];
+        double hy = y[hole];
+        double qx = double.NegativeInfinity;
+        int    m  = -1;
+
+        if (x[hole] == x[p] && y[hole] == y[p])
         {
             return p;
         }
 
         do
         {
-            int pNext = pool[p].Next;
+            int pNext = next[p];
 
-            if (pool[hole].X == pool[pNext].X && pool[hole].Y == pool[pNext].Y)
+            if (x[hole] == x[pNext] && y[hole] == y[pNext])
             {
                 return pNext;
             }
 
-            if (hy <= pool[p].Y && hy >= pool[pNext].Y && pool[pNext].Y != pool[p].Y)
+            if (hy <= y[p] && hy >= y[pNext] && y[pNext] != y[p])
             {
-                double x = pool[p].X + (hy - pool[p].Y) * (pool[pNext].X - pool[p].X) / (pool[pNext].Y - pool[p].Y);
+                double xi = x[p] + (hy - y[p]) * (x[pNext] - x[p]) / (y[pNext] - y[p]);
 
-                if (x <= hx && x > qx)
+                if (xi <= hx && xi > qx)
                 {
-                    qx = x;
-                    m = pool[p].X < pool[pNext].X ? p : pNext;
-                    if (x == hx)
+                    qx = xi;
+                    m  = x[p] < x[pNext] ? p : pNext;
+                    if (xi == hx)
                     {
                         return m;
                     }
                 }
             }
 
-            p = pool[p].Next;
+            p = pNext;
         }
         while (p != outerNode);
 
@@ -712,36 +730,37 @@ public static class Earcut
             return -1;
         }
 
-        int stop = m;
-        double mx = pool[m].X;
-        double my = pool[m].Y;
+        int    stop   = m;
+        double mx     = x[m];
+        double my     = y[m];
         double tanMin = double.PositiveInfinity;
 
         p = m;
 
         do
         {
-            if (hx >= pool[p].X && pool[p].X >= mx && hx != pool[p].X &&
+            double px = x[p], py = y[p];
+
+            if (hx >= px && px >= mx && hx != px &&
                 PointInTriangle(
                     hy < my ? hx : qx, hy,
                     mx, my,
                     hy < my ? qx : hx, hy,
-                    pool[p].X, pool[p].Y))
+                    px, py))
             {
-                double tan = Math.Abs(hy - pool[p].Y) / (hx - pool[p].X);
+                double tan = Math.Abs(hy - py) / (hx - px);
 
                 if (LocallyInside(p, hole, ref pool) &&
                     (tan < tanMin ||
                      (tan == tanMin &&
-                      (pool[p].X > pool[m].X ||
-                       (pool[p].X == pool[m].X && SectorContainsSector(m, p, ref pool))))))
+                      (px > x[m] || (px == x[m] && SectorContainsSector(m, p, ref pool))))))
                 {
-                    m = p;
+                    m      = p;
                     tanMin = tan;
                 }
             }
 
-            p = pool[p].Next;
+            p = next[p];
         }
         while (p != stop);
 
@@ -758,24 +777,28 @@ public static class Earcut
         double invSize,
         ref NodePool pool)
     {
+        double[] x     = pool.X,    y     = pool.Y;
+        int[]    prev  = pool.Prev, next  = pool.Next;
+        int[]    z     = pool.Z,    prevZ = pool.PrevZ, nextZ = pool.NextZ;
+
         int p = start;
 
         do
         {
-            if (pool[p].Z == 0)
+            if (z[p] == 0)
             {
-                pool[p].Z = ZOrder(pool[p].X, pool[p].Y, minX, minY, invSize);
+                z[p] = ZOrder(x[p], y[p], minX, minY, invSize);
             }
 
-            pool[p].PrevZ = pool[p].Prev;
-            pool[p].NextZ = pool[p].Next;
-            p = pool[p].Next;
+            prevZ[p] = prev[p];
+            nextZ[p] = next[p];
+            p = next[p];
         }
         while (p != start);
 
-        int startPrevZ = pool[start].PrevZ;
-        pool[startPrevZ].NextZ = -1;
-        pool[start].PrevZ = -1;
+        int startPrevZ = prevZ[start];
+        nextZ[startPrevZ] = -1;
+        prevZ[start]      = -1;
 
         SortLinked(start, ref pool);
     }
@@ -786,6 +809,10 @@ public static class Earcut
     /// </summary>
     private static int SortLinked(int list, ref NodePool pool)
     {
+        int[] z     = pool.Z;
+        int[] prevZ = pool.PrevZ;
+        int[] nextZ = pool.NextZ;
+
         int numMerges;
         int inSize = 1;
 
@@ -799,13 +826,13 @@ public static class Earcut
             while (p != -1)
             {
                 numMerges++;
-                int q = p;
+                int q     = p;
                 int pSize = 0;
 
                 for (int i = 0; i < inSize; i++)
                 {
                     pSize++;
-                    q = pool[q].NextZ;
+                    q = nextZ[q];
                     if (q == -1)
                     {
                         break;
@@ -819,36 +846,36 @@ public static class Earcut
                     int e;
 
                     if (pSize != 0 &&
-                        (qSize == 0 || q == -1 || pool[p].Z <= pool[q].Z))
+                        (qSize == 0 || q == -1 || z[p] <= z[q]))
                     {
                         e = p;
-                        p = pool[p].NextZ;
+                        p = nextZ[p];
                         pSize--;
                     }
                     else
                     {
                         e = q;
-                        q = pool[q].NextZ;
+                        q = nextZ[q];
                         qSize--;
                     }
 
                     if (tail != -1)
                     {
-                        pool[tail].NextZ = e;
+                        nextZ[tail] = e;
                     }
                     else
                     {
                         list = e;
                     }
 
-                    pool[e].PrevZ = tail;
-                    tail = e;
+                    prevZ[e] = tail;
+                    tail     = e;
                 }
 
                 p = q;
             }
 
-            pool[tail].NextZ = -1;
+            nextZ[tail] = -1;
             inSize *= 2;
         }
         while (numMerges > 1);
@@ -887,14 +914,8 @@ public static class Earcut
 
     /// <summary>Signed area of triangle (p → q → r).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static double Area(int p, int q, int r, ref NodePool pool) =>
-        (pool[q].Y - pool[p].Y) * (pool[r].X - pool[q].X) -
-        (pool[q].X - pool[p].X) * (pool[r].Y - pool[q].Y);
-
-    /// <summary>Signed area of triangle (p → q → r) using pre-fetched node refs.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static double Area(ref NodeData p, ref NodeData q, ref NodeData r) =>
-        (q.Y - p.Y) * (r.X - q.X) - (q.X - p.X) * (r.Y - q.Y);
+    private static double Area(double[] x, double[] y, int p, int q, int r) =>
+        (y[q] - y[p]) * (x[r] - x[q]) - (x[q] - x[p]) * (y[r] - y[q]);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool PointInTriangle(
@@ -916,49 +937,60 @@ public static class Earcut
         PointInTriangle(ax, ay, bx, by, cx, cy, px, py);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool SectorContainsSector(int m, int p, ref NodePool pool) =>
-        Area(pool[m].Prev, m, pool[p].Prev, ref pool) < 0.0 &&
-        Area(pool[p].Next, m, pool[m].Next, ref pool) < 0.0;
+    private static bool SectorContainsSector(int m, int p, ref NodePool pool)
+    {
+        double[] x = pool.X, y = pool.Y;
+        int[]    prev = pool.Prev, next = pool.Next;
+        return Area(x, y, prev[m], m, prev[p]) < 0.0 &&
+               Area(x, y, next[p], m, next[m]) < 0.0;
+    }
 
-    private static bool IsValidDiagonal(int a, int b, ref NodePool pool) =>
-        pool[pool[a].Next].I != pool[b].I &&
-        pool[pool[a].Prev].I != pool[b].I &&
-        !IntersectsPolygon(a, b, ref pool) &&
-        (LocallyInside(a, b, ref pool) && LocallyInside(b, a, ref pool) && MiddleInside(a, b, ref pool) &&
-         (Area(pool[a].Prev, a, pool[b].Prev, ref pool) != 0.0 || Area(a, pool[b].Prev, b, ref pool) != 0.0) ||
-         (pool[a].X == pool[b].X && pool[a].Y == pool[b].Y) &&
-         Area(pool[a].Prev, a, pool[a].Next, ref pool) > 0.0 &&
-         Area(pool[b].Prev, b, pool[b].Next, ref pool) > 0.0);
+    private static bool IsValidDiagonal(int a, int b, ref NodePool pool)
+    {
+        double[] x = pool.X, y = pool.Y;
+        int[]    nodeI = pool.I, prev = pool.Prev, next = pool.Next;
+        return nodeI[next[a]] != nodeI[b] &&
+               nodeI[prev[a]] != nodeI[b] &&
+               !IntersectsPolygon(a, b, ref pool) &&
+               (LocallyInside(a, b, ref pool) && LocallyInside(b, a, ref pool) && MiddleInside(a, b, ref pool) &&
+                (Area(x, y, prev[a], a, prev[b]) != 0.0 || Area(x, y, a, prev[b], b) != 0.0) ||
+                (x[a] == x[b] && y[a] == y[b]) &&
+                Area(x, y, prev[a], a, next[a]) > 0.0 &&
+                Area(x, y, prev[b], b, next[b]) > 0.0);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool Intersects(int p1, int q1, int p2, int q2, ref NodePool pool)
     {
-        int o1 = Math.Sign(Area(p1, q1, p2, ref pool));
-        int o2 = Math.Sign(Area(p1, q1, q2, ref pool));
-        int o3 = Math.Sign(Area(p2, q2, p1, ref pool));
-        int o4 = Math.Sign(Area(p2, q2, q1, ref pool));
+        double[] x = pool.X, y = pool.Y;
+        int o1 = Math.Sign(Area(x, y, p1, q1, p2));
+        int o2 = Math.Sign(Area(x, y, p1, q1, q2));
+        int o3 = Math.Sign(Area(x, y, p2, q2, p1));
+        int o4 = Math.Sign(Area(x, y, p2, q2, q1));
 
         return (o1 != o2 && o3 != o4) ||
-               (o1 == 0 && OnSegment(p1, p2, q1, ref pool)) ||
-               (o2 == 0 && OnSegment(p1, q2, q1, ref pool)) ||
-               (o3 == 0 && OnSegment(p2, p1, q2, ref pool)) ||
-               (o4 == 0 && OnSegment(p2, q1, q2, ref pool));
+               (o1 == 0 && OnSegment(x, y, p1, p2, q1)) ||
+               (o2 == 0 && OnSegment(x, y, p1, q2, q1)) ||
+               (o3 == 0 && OnSegment(x, y, p2, p1, q2)) ||
+               (o4 == 0 && OnSegment(x, y, p2, q1, q2));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool OnSegment(int p, int q, int r, ref NodePool pool) =>
-        pool[q].X <= Math.Max(pool[p].X, pool[r].X) && pool[q].X >= Math.Min(pool[p].X, pool[r].X) &&
-        pool[q].Y <= Math.Max(pool[p].Y, pool[r].Y) && pool[q].Y >= Math.Min(pool[p].Y, pool[r].Y);
+    private static bool OnSegment(double[] x, double[] y, int p, int q, int r) =>
+        x[q] <= Math.Max(x[p], x[r]) && x[q] >= Math.Min(x[p], x[r]) &&
+        y[q] <= Math.Max(y[p], y[r]) && y[q] >= Math.Min(y[p], y[r]);
 
     private static bool IntersectsPolygon(int a, int b, ref NodePool pool)
     {
+        int[]  nodeI = pool.I, next = pool.Next;
+
         int p = a;
 
         do
         {
-            int pNext = pool[p].Next;
-            if (pool[p].I != pool[a].I && pool[pNext].I != pool[a].I &&
-                pool[p].I != pool[b].I && pool[pNext].I != pool[b].I &&
+            int pNext = next[p];
+            if (nodeI[p] != nodeI[a] && nodeI[pNext] != nodeI[a] &&
+                nodeI[p] != nodeI[b] && nodeI[pNext] != nodeI[b] &&
                 Intersects(p, pNext, a, b, ref pool))
             {
                 return true;
@@ -972,24 +1004,31 @@ public static class Earcut
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool LocallyInside(int a, int b, ref NodePool pool) =>
-        Area(pool[a].Prev, a, pool[a].Next, ref pool) < 0.0
-            ? Area(a, b, pool[a].Next, ref pool) >= 0.0 && Area(a, pool[a].Prev, b, ref pool) >= 0.0
-            : Area(a, b, pool[a].Prev, ref pool) < 0.0 || Area(a, pool[a].Next, b, ref pool) < 0.0;
+    private static bool LocallyInside(int a, int b, ref NodePool pool)
+    {
+        double[] x = pool.X, y = pool.Y;
+        int[]    prev = pool.Prev, next = pool.Next;
+        return Area(x, y, prev[a], a, next[a]) < 0.0
+            ? Area(x, y, a, b, next[a]) >= 0.0 && Area(x, y, a, prev[a], b) >= 0.0
+            : Area(x, y, a, b, prev[a]) < 0.0   || Area(x, y, a, next[a], b) < 0.0;
+    }
 
     private static bool MiddleInside(int a, int b, ref NodePool pool)
     {
-        int p = a;
-        bool inside = false;
-        double px = (pool[a].X + pool[b].X) * 0.5;
-        double py = (pool[a].Y + pool[b].Y) * 0.5;
+        double[] x = pool.X, y = pool.Y;
+        int[]    next = pool.Next;
+
+        int    p      = a;
+        bool   inside = false;
+        double px     = (x[a] + x[b]) * 0.5;
+        double py     = (y[a] + y[b]) * 0.5;
 
         do
         {
-            int pNext = pool[p].Next;
-            if (((pool[p].Y > py) != (pool[pNext].Y > py)) &&
-                pool[pNext].Y != pool[p].Y &&
-                px < (pool[pNext].X - pool[p].X) * (py - pool[p].Y) / (pool[pNext].Y - pool[p].Y) + pool[p].X)
+            int pNext = next[p];
+            if (((y[p] > py) != (y[pNext] > py)) &&
+                y[pNext] != y[p] &&
+                px < (x[pNext] - x[p]) * (py - y[p]) / (y[pNext] - y[p]) + x[p])
             {
                 inside = !inside;
             }
@@ -1003,18 +1042,20 @@ public static class Earcut
 
     private static int GetLeftmost(int start, ref NodePool pool)
     {
-        int p = start;
+        double[] x = pool.X, y = pool.Y;
+        int[]    next = pool.Next;
+
+        int p        = start;
         int leftmost = start;
 
         do
         {
-            if (pool[p].X < pool[leftmost].X ||
-                (pool[p].X == pool[leftmost].X && pool[p].Y < pool[leftmost].Y))
+            if (x[p] < x[leftmost] || (x[p] == x[leftmost] && y[p] < y[leftmost]))
             {
                 leftmost = p;
             }
 
-            p = pool[p].Next;
+            p = next[p];
         }
         while (p != start);
 
@@ -1025,22 +1066,24 @@ public static class Earcut
 
     private static int SplitPolygon(int a, int b, ref NodePool pool)
     {
-        int a2 = pool.Alloc(pool[a].I, pool[a].X, pool[a].Y);
-        int b2 = pool.Alloc(pool[b].I, pool[b].X, pool[b].Y);
-        int an = pool[a].Next;
-        int bp = pool[b].Prev;
+        int[] prev = pool.Prev, next = pool.Next;
 
-        pool[a].Next = b;
-        pool[b].Prev = a;
+        int a2 = pool.Alloc(pool.I[a], pool.X[a], pool.Y[a]);
+        int b2 = pool.Alloc(pool.I[b], pool.X[b], pool.Y[b]);
+        int an = next[a];
+        int bp = prev[b];
 
-        pool[a2].Next = an;
-        pool[an].Prev = a2;
+        next[a]  = b;
+        prev[b]  = a;
 
-        pool[b2].Next = a2;
-        pool[a2].Prev = b2;
+        next[a2] = an;
+        prev[an] = a2;
 
-        pool[bp].Next = b2;
-        pool[b2].Prev = bp;
+        next[b2] = a2;
+        prev[a2] = b2;
+
+        next[bp] = b2;
+        prev[b2] = bp;
 
         return b2;
     }
@@ -1051,16 +1094,16 @@ public static class Earcut
 
         if (last == -1)
         {
-            pool[p].Prev = p;
-            pool[p].Next = p;
+            pool.Prev[p] = p;
+            pool.Next[p] = p;
         }
         else
         {
-            int lastNext = pool[last].Next;
-            pool[p].Next = lastNext;
-            pool[p].Prev = last;
-            pool[lastNext].Prev = p;
-            pool[last].Next = p;
+            int lastNext = pool.Next[last];
+            pool.Next[p]        = lastNext;
+            pool.Prev[p]        = last;
+            pool.Prev[lastNext] = p;
+            pool.Next[last]     = p;
         }
 
         return p;
@@ -1069,10 +1112,18 @@ public static class Earcut
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void RemoveNode(int p, ref NodePool pool)
     {
-        pool[pool[p].Next].Prev = pool[p].Prev;
-        pool[pool[p].Prev].Next = pool[p].Next;
-        if (pool[p].PrevZ != -1) pool[pool[p].PrevZ].NextZ = pool[p].NextZ;
-        if (pool[p].NextZ != -1) pool[pool[p].NextZ].PrevZ = pool[p].PrevZ;
+        int[]  prev = pool.Prev, next = pool.Next;
+        int[]  prevZ = pool.PrevZ, nextZ = pool.NextZ;
+
+        int pPrev = prev[p];
+        int pNext = next[p];
+        next[pPrev] = pNext;
+        prev[pNext] = pPrev;
+
+        int pPrevZ = prevZ[p];
+        int pNextZ = nextZ[p];
+        if (pPrevZ != -1) nextZ[pPrevZ] = pNextZ;
+        if (pNextZ != -1) prevZ[pNextZ] = pPrevZ;
     }
 
     private static double SignedArea(
@@ -1130,7 +1181,7 @@ public static class Earcut
                 Array.Resize(ref _buffer, Math.Max(_buffer.Length * 2, _count + 3));
             }
 
-            _buffer[_count] = a;
+            _buffer[_count]     = a;
             _buffer[_count + 1] = b;
             _buffer[_count + 2] = c;
             _count += 3;
@@ -1139,68 +1190,79 @@ public static class Earcut
         public int[] ToArray() => _count == _buffer.Length ? _buffer : _buffer[.._count];
     }
 
-    // ──────────────────────────── node types ───────────────────────────────
+    // ──────────────────────────── node pool ────────────────────────────────
 
     /// <summary>
-    /// Flat value-type representation of a vertex node.
-    /// All link fields use -1 as the null sentinel.
+    /// Structure-of-Arrays node pool for one <see cref="Triangulate"/> call.
     /// </summary>
     /// <remarks>
-    /// Fields are ordered with the two <see langword="double"/> coordinates
-    /// first to avoid the 4-byte implicit padding gap that would appear
-    /// before them if <c>I</c> were first.  The natural aligned size is
-    /// 48 bytes (16 B doubles + 24 B ints + 1 B bool + 7 B padding).
+    /// Separating the immutable coordinate arrays (<see cref="X"/>, <see cref="Y"/>,
+    /// <see cref="I"/>) from the mutable link arrays (<see cref="Prev"/>,
+    /// <see cref="Next"/>, …) means that writes to link data during
+    /// <c>RemoveNode</c> / <c>InsertNode</c> / <c>SplitPolygon</c> can never
+    /// dirty the cache lines holding coordinate data.  The coordinate arrays
+    /// remain hot in L1/L2 cache throughout the inner loops of
+    /// <c>IsEar</c> / <c>IsEarHashed</c>, eliminating the false-sharing
+    /// cache thrash that occurred with the previous Array-of-Structures layout.
     /// </remarks>
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NodeData
-    {
-        public double X;        // X coordinate
-        public double Y;        // Y coordinate
-        public int    I;        // vertex index in the coordinate array
-        public int    Prev;     // index of previous vertex in ring  (-1 = none)
-        public int    Next;     // index of next vertex in ring      (-1 = none)
-        public int    Z;        // z-order curve value
-        public int    PrevZ;    // index of previous node in z-order (-1 = none)
-        public int    NextZ;    // index of next node in z-order     (-1 = none)
-        public bool   Steiner;  // is this a Steiner point?
-    }
-
-    /// <summary>
-    /// Pool of <see cref="NodeData"/> values backed by a rented array.
-    /// All nodes for one <see cref="Triangulate"/> call live in a single
-    /// contiguous allocation.
-    /// </summary>
     private struct NodePool : IDisposable
     {
-        private NodeData[] _nodes;
-        private int        _count;
+        // Immutable coordinate data — set once in Alloc, never written again.
+        internal double[] X;
+        internal double[] Y;
+        internal int[]    I;
+
+        // Mutable link data — frequently updated by linked-list operations.
+        internal int[]  Prev;
+        internal int[]  Next;
+        internal int[]  Z;
+        internal int[]  PrevZ;
+        internal int[]  NextZ;
+        internal bool[] Steiner;
+
+        private int _count;
 
         public NodePool(int capacity)
         {
-            _nodes = ArrayPool<NodeData>.Shared.Rent(capacity);
-            _count = 0;
+            X       = ArrayPool<double>.Shared.Rent(capacity);
+            Y       = ArrayPool<double>.Shared.Rent(capacity);
+            I       = ArrayPool<int>.Shared.Rent(capacity);
+            Prev    = ArrayPool<int>.Shared.Rent(capacity);
+            Next    = ArrayPool<int>.Shared.Rent(capacity);
+            Z       = ArrayPool<int>.Shared.Rent(capacity);
+            PrevZ   = ArrayPool<int>.Shared.Rent(capacity);
+            NextZ   = ArrayPool<int>.Shared.Rent(capacity);
+            Steiner = ArrayPool<bool>.Shared.Rent(capacity);
+            _count  = 0;
         }
 
         /// <summary>Allocates one node and returns its index.</summary>
         public int Alloc(int i, double x, double y)
         {
-            int idx = _count++;
-            ref NodeData n = ref _nodes[idx];
-            n.I       = i;
-            n.X       = x;
-            n.Y       = y;
-            n.Prev    = -1;
-            n.Next    = -1;
-            n.Z       = 0;
-            n.PrevZ   = -1;
-            n.NextZ   = -1;
-            n.Steiner = false;
+            int idx   = _count++;
+            X[idx]       = x;
+            Y[idx]       = y;
+            I[idx]       = i;
+            Prev[idx]    = -1;
+            Next[idx]    = -1;
+            Z[idx]       = 0;
+            PrevZ[idx]   = -1;
+            NextZ[idx]   = -1;
+            Steiner[idx] = false;
             return idx;
         }
 
-        /// <summary>Returns a ref to the node at the given index for in-place mutation.</summary>
-        public ref NodeData this[int idx] => ref _nodes[idx];
-
-        public void Dispose() => ArrayPool<NodeData>.Shared.Return(_nodes);
+        public void Dispose()
+        {
+            ArrayPool<double>.Shared.Return(X);
+            ArrayPool<double>.Shared.Return(Y);
+            ArrayPool<int>.Shared.Return(I);
+            ArrayPool<int>.Shared.Return(Prev);
+            ArrayPool<int>.Shared.Return(Next);
+            ArrayPool<int>.Shared.Return(Z);
+            ArrayPool<int>.Shared.Return(PrevZ);
+            ArrayPool<int>.Shared.Return(NextZ);
+            ArrayPool<bool>.Shared.Return(Steiner);
+        }
     }
 }
