@@ -36,19 +36,28 @@ This document describes how constructs in the upstream [mapbox/earcut](https://g
 
 ### Linked List Node Object
 
-The JS library uses plain objects for linked list nodes. In C# these are represented as a `private sealed class Node`:
+The JS library uses plain objects for linked list nodes. In C# these are represented as a compact `private struct Node` (pure data, no linkage) stored inside a `private struct NodePool`.
+
+`Node` holds only the vertex data fields:
 
 | JavaScript property | C# field |
 |---|---|
 | `i` | `int I` |
 | `x` | `double X` |
 | `y` | `double Y` |
-| `prev` | `Node? Prev` |
-| `next` | `Node? Next` |
 | `z` | `int Z` |
-| `prevZ` | `Node? PrevZ` |
-| `nextZ` | `Node? NextZ` |
 | `steiner` | `bool Steiner` |
+
+The linkage fields (`prev`, `next`, `prevZ`, `nextZ`) are stored separately in `NodePool` as parallel `int[]` arrays (indices into the node array), with `NodePool.Nil = -1` as the sentinel for null:
+
+| JavaScript property | C# accessor |
+|---|---|
+| `node.prev` | `pool.Prev(idx)` / `pool.SetPrev(idx, value)` |
+| `node.next` | `pool.Next(idx)` / `pool.SetNext(idx, value)` |
+| `node.prevZ` | `pool.PrevZ(idx)` / `pool.SetPrevZ(idx, value)` |
+| `node.nextZ` | `pool.NextZ(idx)` / `pool.SetNextZ(idx, value)` |
+
+`pool.Data(idx)` returns a `ref Node` for zero-copy field access. `pool.Allocate(i, x, y)` replaces `new Node(i, x, y)` and returns an `int` index.
 
 ### Control Flow
 
@@ -96,10 +105,10 @@ The JS library uses plain objects for linked list nodes. In C# these are represe
 
 | JavaScript | C# |
 |---|---|
-| `if (!x)` | `if (x is null)` |
-| `if (x)` | `if (x is not null)` |
-| `x && x.y` | `x?.Y` (null-conditional) |
-| `` x \|\| default `` | `x ?? default` (null-coalescing) |
+| `if (!x)` | `if (x == NodePool.Nil)` (for node indices) or `if (x is null)` (for other refs) |
+| `if (x)` | `if (x != NodePool.Nil)` (for node indices) or `if (x is not null)` (for other refs) |
+| `x && x.y` | `x?.Y` (null-conditional, for non-node refs) |
+| `` x \|\| default `` | `x ?? default` (null-coalescing, for non-node refs) |
 
 ### String Handling
 
@@ -115,6 +124,8 @@ The C# port applies several .NET-specific performance improvements beyond a mech
 |---|---|---|
 | Zero-copy input | Arrays passed by reference | `ReadOnlySpan<double>` / `ReadOnlySpan<int>` |
 | Memory allocation | Dynamic arrays | Pre-allocated `List<int>` with capacity hint |
+| Node storage | Plain objects (heap, GC-traced) | `NodePool` struct-of-arrays: one `Node[]` + four `int[]` link arrays; nodes are `int` indices (no GC references) |
+| Cache locality | Random heap access per node | Contiguous parallel arrays, sequential traversal |
 | Unsafe stack frames | N/A | `[module: SkipLocalsInit]` to skip zero-init of locals |
 | JIT warmup | JIT always runs | `TieredPGO=true`, `TieredCompilationQuickJit=false` |
 | Math intrinsics | `Math.min/max` | `Math.Min/Max` (maps to CPU intrinsics via JIT) |
