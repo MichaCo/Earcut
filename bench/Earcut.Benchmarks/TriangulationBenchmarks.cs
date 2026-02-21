@@ -46,7 +46,7 @@ public class TriangulationBenchmarks
         LoadFixture("water-huge", out _waterHugeVertices, out _waterHugeHoles);
     }
 
-    private void LoadFixture(string name, out double[] vertices, out int[] holes)
+    private static void LoadFixture(string name, out double[] vertices, out int[] holes)
     {
         try
         {

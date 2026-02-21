@@ -10,6 +10,11 @@ namespace EarcutDotNet.Tests;
 
 public class EarcutPortedTests
 {
+    private static readonly JsonSerializerOptions s_cachedJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private class ExpectedResults
     {
         public Dictionary<string, int> Triangles { get; set; } = new();
@@ -23,11 +28,7 @@ public class EarcutPortedTests
     {
         var expectedPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "expected.json");
         var json = File.ReadAllText(expectedPath);
-        var options = new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        };
-        return JsonSerializer.Deserialize<ExpectedResults>(json, options) ?? new ExpectedResults();
+        return JsonSerializer.Deserialize<ExpectedResults>(json, s_cachedJsonOptions) ?? new ExpectedResults();
     }
 
     public static TheoryData<string, int, int, double> GetFixtureTestData()
@@ -46,13 +47,13 @@ public class EarcutPortedTests
                 double expectedDeviation = 0.0;
 
                 // Determine expected deviation based on rotation
-                if (rotation != 0 && expected.ErrorsWithRotation.ContainsKey(fixtureName))
+                if (rotation != 0 && expected.ErrorsWithRotation.TryGetValue(fixtureName, out var value))
                 {
-                    expectedDeviation = expected.ErrorsWithRotation[fixtureName];
+                    expectedDeviation = value;
                 }
-                else if (expected.Errors.ContainsKey(fixtureName))
+                else if (expected.Errors.TryGetValue(fixtureName, out var value1))
                 {
-                    expectedDeviation = expected.Errors[fixtureName];
+                    expectedDeviation = value1;
                 }
 
                 theoryData.Add(fixtureName, rotation, expectedTriangles, expectedDeviation);

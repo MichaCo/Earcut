@@ -114,7 +114,11 @@ image.Mutate(ctx =>
     // 1-point path produces no visible stroke, matching viz.js behaviour.
     foreach (double[][] ring in testPoints)
     {
-        if (ring.Length < 2) continue;
+        if (ring.Length < 2)
+        {
+            continue;
+        }
+
         var pts = ring.Select(pt => ToCanvas(pt, minX, minY, ratio)).ToArray();
         ctx.Draw(new DrawingOptions(), Color.Black, 1f, new Polygon(pts));
     }
