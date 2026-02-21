@@ -9,8 +9,16 @@ namespace EarcutDotNet.Benchmarks;
 
 public class Program
 {
-    public static void Main()
+    public static void Main(string[] args)
     {
-        BenchmarkRunner.Run<TriangulationBenchmarks>();
+        var m = new TriangulationBenchmarks();
+        m.Setup();
+        m.TriangulateSquare();
+        m.TriangulateWater();
+        m.TriangulateWaterHuge();
+        m.TriangulateDude();
+        m.TriangulateComplexPolygon();
+
+        BenchmarkSwitcher.FromAssembly(typeof(TriangulationBenchmarks).Assembly).Run(args);
     }
 }

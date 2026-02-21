@@ -48,65 +48,73 @@ public class TriangulationBenchmarks
 
     private static void LoadFixture(string name, out double[] vertices, out int[] holes)
     {
-        try
-        {
-            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "test", "Earcut.Tests", "fixtures", $"{name}.json");
-            if (!File.Exists(path))
-            {
-                // Fallback to simple polygon
-                vertices = [0, 0, 10, 0, 10, 10, 0, 10];
-                holes = [];
-                return;
-            }
+        string path = Path.Combine(
+            AppDomain.CurrentDomain.BaseDirectory, "fixtures", $"{name}.json");
 
-            var json = File.ReadAllText(path);
-            var coords = JsonSerializer.Deserialize<double[][][]>(json);
-            if (coords != null)
-            {
-                var (Vertices, Holes, Dimensions) = Earcut.Flatten(coords);
-                vertices = Vertices;
-                holes = Holes;
-            }
-            else
-            {
-                vertices = [0, 0, 10, 0, 10, 10, 0, 10];
-                holes = [];
-            }
-        }
-        catch
-        {
-            vertices = [0, 0, 10, 0, 10, 10, 0, 10];
-            holes = [];
-        }
+        var json = File.ReadAllText(path);
+        var coords = JsonSerializer.Deserialize<double[][][]>(json)
+            ?? throw new InvalidDataException($"Fixture '{name}' deserialized to null.");
+
+        (vertices, holes, _) = Earcut.Flatten(coords);
     }
 
     [Benchmark]
     public IReadOnlyList<int> TriangulateSquare()
     {
-        return Earcut.Triangulate(_square);
+        var r = Earcut.Triangulate(_square);
+        if (r.Length == 0)
+        {
+            throw new Exception();
+        }
+
+        return r;
     }
 
     [Benchmark]
     public IReadOnlyList<int> TriangulateComplexPolygon()
     {
-        return Earcut.Triangulate(_complexPolygon);
+        var r =  Earcut.Triangulate(_complexPolygon);
+        if (r.Length == 0)
+        {
+            throw new Exception();
+        }
+
+        return r;
     }
 
     [Benchmark]
     public IReadOnlyList<int> TriangulateDude()
     {
-        return Earcut.Triangulate(_dudeVertices, _dudeHoles);
+        var r = Earcut.Triangulate(_dudeVertices, _dudeHoles);
+        if (r.Length == 0)
+        {
+            throw new Exception();
+        }
+
+        return r;
     }
 
     [Benchmark]
     public IReadOnlyList<int> TriangulateWater()
     {
-        return Earcut.Triangulate(_waterVertices, _waterHoles);
+        var r = Earcut.Triangulate(_waterVertices, _waterHoles);
+        if (r.Length == 0)
+        {
+            throw new Exception();
+        }
+
+        return r;
     }
 
     [Benchmark]
     public IReadOnlyList<int> TriangulateWaterHuge()
     {
-        return Earcut.Triangulate(_waterHugeVertices, _waterHugeHoles);
+        var r = Earcut.Triangulate(_waterHugeVertices, _waterHugeHoles);
+        if (r.Length == 0)
+        {
+            throw new Exception();
+        }
+
+        return r;
     }
 }
