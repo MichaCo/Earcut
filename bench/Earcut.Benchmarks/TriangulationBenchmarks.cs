@@ -20,6 +20,8 @@ public class TriangulationBenchmarks
     private int[] _waterHoles = null!;
     private double[] _waterHugeVertices = null!;
     private int[] _waterHugeHoles = null!;
+    private double[] _waterHuge3Vertices = null!;
+    private int[] _waterHuge3Holes = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -44,6 +46,9 @@ public class TriangulationBenchmarks
 
         // Load water-huge fixture
         LoadFixture("water-huge", out _waterHugeVertices, out _waterHugeHoles);
+
+        // Load water-huge3 fixture
+        LoadFixture("water-huge3", out _waterHuge3Vertices, out _waterHuge3Holes);
     }
 
     private static void LoadFixture(string name, out double[] vertices, out int[] holes)
@@ -110,6 +115,18 @@ public class TriangulationBenchmarks
     public IReadOnlyList<int> TriangulateWaterHuge()
     {
         var r = Earcut.Triangulate(_waterHugeVertices, _waterHugeHoles);
+        if (r.Length == 0)
+        {
+            throw new Exception();
+        }
+
+        return r;
+    }
+
+    [Benchmark]
+    public IReadOnlyList<int> TriangulateWaterHuge3()
+    {
+        var r = Earcut.Triangulate(_waterHuge3Vertices, _waterHuge3Holes);
         if (r.Length == 0)
         {
             throw new Exception();

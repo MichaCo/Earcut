@@ -122,7 +122,7 @@ public class EarcutPortedTests
     {
         double[] data = [10, 0, 0, 50, 60, 60, 70, 10];
         var indices = Earcut.Triangulate(data);
-        int[] expected = [1, 0, 3, 3, 2, 1];
+        int[] expected = [1, 0, 3, 1, 3, 2];
         Assert.Equal(expected, indices);
     }
 
@@ -131,7 +131,7 @@ public class EarcutPortedTests
     {
         double[] data = [10, 0, 0, 0, 50, 0, 60, 60, 0, 70, 10, 0];
         var indices = Earcut.Triangulate(data, [], 3);
-        int[] expected = [1, 0, 3, 3, 2, 1];
+        int[] expected = [1, 0, 3, 1, 3, 2];
         Assert.Equal(expected, indices);
     }
 
@@ -149,5 +149,96 @@ public class EarcutPortedTests
         int[] holes = [5];
         // Should not hang
         Earcut.Triangulate(data, holes, 2);
+    }
+
+    [Fact]
+    public void Refine_ImprovesABadQuadDiagonal()
+    {
+        double[] vertices = [0, 0, 3, 0, 10, 1, 0, 2];
+        int[] triangles = [2, 3, 0, 2, 0, 1];
+        double beforePerimeter = TrianglePerimeter(triangles, vertices);
+        Earcut.Refine(triangles, vertices);
+        double afterPerimeter = TrianglePerimeter(triangles, vertices);
+
+        Assert.Equal(new int[] { 2, 3, 1, 3, 0, 1 }, triangles);
+        Assert.True(afterPerimeter < beforePerimeter * 0.7);
+        Assert.Equal(0.0, Earcut.Deviation(vertices, [], 2, triangles));
+    }
+
+    [Fact]
+    public void Refine_LeavesAGoodQuadDiagonalAlone()
+    {
+        double[] vertices = [0, 0, 5, 0, 4, 1, 0, 4];
+        int[] triangles = [2, 3, 0, 2, 0, 1];
+        Earcut.Refine(triangles, vertices);
+
+        Assert.Equal(new int[] { 2, 3, 0, 2, 0, 1 }, triangles);
+        Assert.Equal(0.0, Earcut.Deviation(vertices, [], 2, triangles));
+    }
+
+    [Fact]
+    public void Refine_PreservesAConcavePolygon()
+    {
+        double[] vertices = [0, 0, 4, 0, 4, 1, 1, 1, 1, 4, 0, 4];
+        int[] triangles = Earcut.Triangulate(vertices);
+        int length = triangles.Length;
+        double beforePerimeter = TrianglePerimeter(triangles, vertices);
+        Earcut.Refine(triangles, vertices);
+        double afterPerimeter = TrianglePerimeter(triangles, vertices);
+
+        Assert.Equal(length, triangles.Length);
+        Assert.True(afterPerimeter < beforePerimeter * 0.9);
+        Assert.Equal(0.0, Earcut.Deviation(vertices, [], 2, triangles));
+    }
+
+    [Fact]
+    public void BlockIndexCollinear()
+    {
+        const int N = 30;
+        var outer = new List<double[]>();
+        for (int x = 0; x <= N; x++) outer.Add([x, 0]);
+        for (int y = 1; y <= N; y++) outer.Add([N, y]);
+        for (int x = N - 1; x >= 0; x--) outer.Add([x, N]);
+        for (int y = N - 1; y >= 1; y--) outer.Add([0, y]);
+
+        static double[][] Rect(int x0, int y0, int w, int h) =>
+        [
+            [x0, y0], [x0, y0 + h], [x0 + w, y0 + h], [x0 + w, y0]
+        ];
+
+        var rings = new List<double[][]> { outer.ToArray(), Rect(5, 5, 2, 4), Rect(2, 23, 1, 1) };
+
+        foreach (int rotation in new[] { 0, 90, 180, 270 })
+        {
+            double theta = rotation * Math.PI / 180;
+            int xx = (int)Math.Round(Math.Cos(theta));
+            int xy = (int)Math.Round(-Math.Sin(theta));
+            int yx = (int)Math.Round(Math.Sin(theta));
+            int yy = (int)Math.Round(Math.Cos(theta));
+
+            var rotated = rings.Select(ring =>
+                ring.Select(coord => new double[] { xx * coord[0] + xy * coord[1], yx * coord[0] + yy * coord[1] })
+                    .ToArray()).ToArray();
+
+            var (vertices, holes, dimensions) = Earcut.Flatten(rotated);
+            int[] indices = Earcut.Triangulate(vertices, holes, dimensions);
+            double err = Earcut.Deviation(vertices, holes, dimensions, indices);
+            Assert.True(err < 1e-9, $"rotation {rotation}: deviation {err} (hole dropped?)");
+        }
+    }
+
+    private static double TrianglePerimeter(int[] triangles, double[] vertices, int dim = 2)
+    {
+        double perimeter = 0;
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            double ax = vertices[triangles[i] * dim],     ay = vertices[triangles[i] * dim + 1];
+            double bx = vertices[triangles[i + 1] * dim], by = vertices[triangles[i + 1] * dim + 1];
+            double cx = vertices[triangles[i + 2] * dim], cy = vertices[triangles[i + 2] * dim + 1];
+            perimeter += Math.Sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by)) +
+                         Math.Sqrt((bx - cx) * (bx - cx) + (by - cy) * (by - cy)) +
+                         Math.Sqrt((cx - ax) * (cx - ax) + (cy - ay) * (cy - ay));
+        }
+        return perimeter;
     }
 }
