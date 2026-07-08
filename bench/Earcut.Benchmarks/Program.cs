@@ -16,6 +16,8 @@ public class Program
         m.TriangulateSquare();
         m.TriangulateWater();
         m.TriangulateWaterHuge();
+        m.TriangulateWaterHuge3();
+        m.RefineWaterHuge3();
         m.TriangulateDude();
         m.TriangulateComplexPolygon();
 
