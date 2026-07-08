@@ -50,10 +50,11 @@ public static class Earcut
         // Pre-allocate: a simple polygon with V vertices produces at most V-2 triangles.
         int vertexCount = data.Length / dim;
         var triangles = new TriangleList(Math.Max(0, (vertexCount - 2) * 3));
+        var workspace = new TriangulationWorkspace();
 
         if (hasHoles)
         {
-            outerNode = EliminateHoles(data, holeIndices, outerNode, dim);
+            outerNode = EliminateHoles(data, holeIndices, outerNode, dim, workspace);
         }
 
         double minX = 0, minY = 0, invSize = 0;
@@ -81,7 +82,7 @@ public static class Earcut
             invSize = invSize != 0.0 ? 32767.0 / invSize : 0.0;
         }
 
-        EarcutLinked(outerNode, triangles, minX, minY, invSize);
+        EarcutLinked(outerNode, triangles, minX, minY, invSize, workspace);
 
         return triangles.ToArray();
     }
@@ -188,46 +189,69 @@ public static class Earcut
     public static void Refine(int[] triangles, ReadOnlySpan<double> coords, int dim = 2)
     {
         int n = triangles.Length;
-        if (n < 6) return;
+        if (n < 6)
+        {
+            return;
+        }
 
-        EnsureRefineScratch(n);
-        s_gen++;
+        var workspace = new RefineWorkspace(n);
+        const uint generation = 1;
 
-        int[] he = s_refHe!;
-        he.AsSpan(0, n).Fill(-1);
+        int[] halfEdges = workspace.HalfEdges;
+        halfEdges.AsSpan(0, n).Fill(-1);
+        int[] hashTable = workspace.HashTable;
+        uint[] hashStamp = workspace.HashStamp;
+        byte[] edgeStamp = workspace.EdgeStamp;
+        int[] edgeStack = workspace.EdgeStack;
+        int hashMask = workspace.HashMask;
 
         // Build half-edge twins with an undirected-edge hash; seed interior edges onto the stack.
         int stackTop = 0;
         for (int e = 0; e < n; e++)
         {
-            int a = triangles[e], b = triangles[NextHE(e)];
-            int lo = a < b ? a : b, hi = a < b ? b : a;
-            int h = (int)((unchecked((uint)lo * 0x9e3779b1u) ^ unchecked((uint)hi * 0x85ebca6bu)) & (uint)s_hMask);
+            int a = triangles[e];
+            int b = triangles[NextHE(e)];
+            int lo = a < b ? a : b;
+            int hi = a < b ? b : a;
+            int h = (int)((unchecked((uint)lo * 0x9e3779b1u) ^ unchecked((uint)hi * 0x85ebca6bu)) & (uint)hashMask);
 
-            while (s_hStamp![h] == s_gen)
+            while (hashStamp[h] == generation)
             {
-                int s = s_hTable![h];
+                int s = hashTable[h];
                 if (s != -1)
                 {
-                    int sa = triangles[s], sb = triangles[NextHE(s)];
+                    int sa = triangles[s];
+                    int sb = triangles[NextHE(s)];
                     if ((sa == lo && sb == hi) || (sa == hi && sb == lo))
                     {
-                        he[e] = s; he[s] = e; s_hTable[h] = -1;
-                        s_edgeStamp![s] = 1; s_edgeStack![stackTop++] = s;
+                        halfEdges[e] = s;
+                        halfEdges[s] = e;
+                        hashTable[h] = -1;
+                        edgeStamp[s] = 1;
+                        edgeStack[stackTop++] = s;
                         break;
                     }
                 }
-                h = (h + 1) & s_hMask;
+
+                h = (h + 1) & hashMask;
             }
-            if (s_hStamp![h] != s_gen) { s_hTable![h] = e; s_hStamp[h] = s_gen; }
+
+            if (hashStamp[h] != generation)
+            {
+                hashTable[h] = e;
+                hashStamp[h] = generation;
+            }
         }
 
         while (stackTop > 0)
         {
-            int a = s_edgeStack![--stackTop];
-            s_edgeStamp![a] = 0;
-            int b = he[a];
-            if (b == -1) continue;
+            int a = edgeStack[--stackTop];
+            edgeStamp[a] = 0;
+            int b = halfEdges[a];
+            if (b == -1)
+            {
+                continue;
+            }
 
             int a0 = a - a % 3;
             int b0 = b - b % 3;
@@ -235,12 +259,19 @@ public static class Earcut
             int al = a0 + (a + 1) % 3;
             int bl = b0 + (b + 2) % 3;
             int br = b0 + (b + 1) % 3;
-            int p0 = triangles[ar], pr = triangles[a], pl = triangles[al], p1 = triangles[bl];
+            int p0 = triangles[ar];
+            int pr = triangles[a];
+            int pl = triangles[al];
+            int p1 = triangles[bl];
 
-            double x0 = coords[p0 * dim], y0 = coords[p0 * dim + 1];
-            double xr = coords[pr * dim], yr = coords[pr * dim + 1];
-            double xl = coords[pl * dim], yl = coords[pl * dim + 1];
-            double x1 = coords[p1 * dim], y1 = coords[p1 * dim + 1];
+            double x0 = coords[p0 * dim];
+            double y0 = coords[p0 * dim + 1];
+            double xr = coords[pr * dim];
+            double yr = coords[pr * dim + 1];
+            double xl = coords[pl * dim];
+            double yl = coords[pl * dim + 1];
+            double x1 = coords[p1 * dim];
+            double y1 = coords[p1 * dim + 1];
 
             // Flip the shared edge when it would improve the Delaunay condition and the quad
             // is convex (both resulting triangles must remain CCW after the flip).
@@ -248,53 +279,54 @@ public static class Earcut
                 Orient(x0, y0, xr, yr, x1, y1) > 0 &&
                 Orient(x0, y0, x1, y1, xl, yl) > 0)
             {
-                triangles[a] = p1; triangles[b] = p0;
-                int hbl = he[bl], har = he[ar];
-                he[a] = hbl; if (hbl != -1) he[hbl] = a;
-                he[b] = har; if (har != -1) he[har] = b;
-                he[ar] = bl; he[bl] = ar;
+                triangles[a] = p1;
+                triangles[b] = p0;
 
-                if (hbl    != -1 && s_edgeStamp[a]  == 0) { s_edgeStamp[a]  = 1; s_edgeStack[stackTop++] = a; }
-                if (har    != -1 && s_edgeStamp[b]  == 0) { s_edgeStamp[b]  = 1; s_edgeStack[stackTop++] = b; }
-                if (he[al] != -1 && s_edgeStamp[al] == 0) { s_edgeStamp[al] = 1; s_edgeStack[stackTop++] = al; }
-                if (he[br] != -1 && s_edgeStamp[br] == 0) { s_edgeStamp[br] = 1; s_edgeStack[stackTop++] = br; }
+                int hbl = halfEdges[bl];
+                int har = halfEdges[ar];
+                halfEdges[a] = hbl;
+                if (hbl != -1)
+                {
+                    halfEdges[hbl] = a;
+                }
+
+                halfEdges[b] = har;
+                if (har != -1)
+                {
+                    halfEdges[har] = b;
+                }
+
+                halfEdges[ar] = bl;
+                halfEdges[bl] = ar;
+
+                if (hbl != -1 && edgeStamp[a] == 0)
+                {
+                    edgeStamp[a] = 1;
+                    edgeStack[stackTop++] = a;
+                }
+
+                if (har != -1 && edgeStamp[b] == 0)
+                {
+                    edgeStamp[b] = 1;
+                    edgeStack[stackTop++] = b;
+                }
+
+                if (halfEdges[al] != -1 && edgeStamp[al] == 0)
+                {
+                    edgeStamp[al] = 1;
+                    edgeStack[stackTop++] = al;
+                }
+
+                if (halfEdges[br] != -1 && edgeStamp[br] == 0)
+                {
+                    edgeStamp[br] = 1;
+                    edgeStack[stackTop++] = br;
+                }
             }
         }
     }
 
-    // ──────────────────── thread-local scratch state ─────────────────────────
-
-    // filteredOut: set by FilterPoints whenever it removes at least one node;
-    // read by EarcutLinked's stall handler.
-    [ThreadStatic] private static bool s_filteredOut;
-
-    // indexActive: true while EliminateHoles is merging holes; signals RemoveNode
-    // to call GrowBlock so block bboxes stay valid after edge healing.
-    [ThreadStatic] private static bool s_indexActive;
-
-    // ── Block-bbox index (FindHoleBridge optimisation) ──
-    private const int K = 16; // edges per block
-
-    [ThreadStatic] private static double[]? s_blockBBox;   // [minX,minY,maxX,maxY] per block
-    [ThreadStatic] private static int s_numBlocks;
-    [ThreadStatic] private static Node[]? s_blockHead;     // first node of each block's segment
-    [ThreadStatic] private static Node[]? s_blockStop;     // node just past each block (exclusive)
-
-    // ── z-order sort scratch ──
-    [ThreadStatic] private static Node[]? s_sortArr;
-    [ThreadStatic] private static Node[]? s_sortBuf;
-    [ThreadStatic] private static uint[]? s_zArr;
-    [ThreadStatic] private static uint[]? s_zBuf;
-    [ThreadStatic] private static uint[]? s_counts; // 256 entries
-
-    // ── Refine scratch ──
-    [ThreadStatic] private static int[]? s_edgeStack;
-    [ThreadStatic] private static int[]? s_refHe;
-    [ThreadStatic] private static int[]? s_hTable;
-    [ThreadStatic] private static uint[]? s_hStamp;
-    [ThreadStatic] private static byte[]? s_edgeStamp;
-    [ThreadStatic] private static int s_hMask;
-    [ThreadStatic] private static uint s_gen;
+    private const int BlockSize = 16;
 
     // ──────────────────────── linked-list helpers ───────────────────────────
 
@@ -336,7 +368,10 @@ public static class Earcut
     }
 
     /// <summary>Eliminates collinear or duplicate points.</summary>
-    private static Node? FilterPoints(Node? start, Node? end = null)
+    private static Node? FilterPoints(
+        Node? start,
+        Node? end = null,
+        TriangulationWorkspace? workspace = null)
     {
         if (start is null)
         {
@@ -360,8 +395,12 @@ public static class Earcut
                 {
                     end = p.Prev!;
                 }
-                s_filteredOut = true;
-                RemoveNode(p);
+                if (workspace is not null)
+                {
+                    workspace.FilteredOut = true;
+                }
+
+                RemoveNode(p, workspace);
                 p = p.Prev!;
                 again = true;
             }
@@ -385,7 +424,8 @@ public static class Earcut
         TriangleList triangles,
         double minX,
         double minY,
-        double invSize)
+        double invSize,
+        TriangulationWorkspace workspace)
     {
         if (ear is null)
         {
@@ -394,7 +434,7 @@ public static class Earcut
 
         if (invSize != 0.0)
         {
-            IndexCurve(ear, minX, minY, invSize);
+            IndexCurve(ear, minX, minY, invSize, workspace);
         }
 
         Node stop = ear;
@@ -413,7 +453,7 @@ public static class Earcut
                 // Emit triangle.
                 triangles.Add(prev.I, ear.I, next.I);
 
-                RemoveNode(ear);
+                RemoveNode(ear, workspace);
 
                 ear = next;
                 stop = next;
@@ -425,21 +465,25 @@ public static class Earcut
             if (ReferenceEquals(ear, stop))
             {
                 // Try filtering collinear/coincident points and re-clipping.
-                s_filteredOut = false;
-                ear = FilterPoints(ear)!;
-                if (s_filteredOut) { stop = ear; continue; }
+                workspace.FilteredOut = false;
+                ear = FilterPoints(ear, workspace: workspace)!;
+                if (workspace.FilteredOut)
+                {
+                    stop = ear;
+                    continue;
+                }
 
                 // Cure small local self-intersections once, then retry.
                 if (!cured)
                 {
-                    ear = CureLocalIntersections(ear, triangles);
+                    ear = CureLocalIntersections(ear, triangles, workspace);
                     stop = ear;
                     cured = true;
                     continue;
                 }
 
                 // Last resort: split the polygon.
-                SplitEarcut(ear, triangles, minX, minY, invSize);
+                SplitEarcut(ear, triangles, minX, minY, invSize, workspace);
                 break;
             }
         }
@@ -545,7 +589,10 @@ public static class Earcut
     /// Walks the polygon and fixes small local self-intersections by
     /// emitting a triangle at each crossing.
     /// </summary>
-    private static Node CureLocalIntersections(Node start, TriangleList triangles)
+    private static Node CureLocalIntersections(
+        Node start,
+        TriangleList triangles,
+        TriangulationWorkspace workspace)
     {
         Node p = start;
         bool cured = false;
@@ -562,8 +609,8 @@ public static class Earcut
             {
                 triangles.Add(a.I, p.I, b.I);
 
-                RemoveNode(p);
-                RemoveNode(p.Next!);
+                RemoveNode(p, workspace);
+                RemoveNode(p.Next!, workspace);
 
                 p = start = b;
                 cured = true;
@@ -573,7 +620,7 @@ public static class Earcut
         }
         while (!ReferenceEquals(p, start));
 
-        return cured ? FilterPoints(p)! : p;
+        return cured ? FilterPoints(p, workspace: workspace)! : p;
     }
 
     /// <summary>
@@ -585,7 +632,8 @@ public static class Earcut
         TriangleList triangles,
         double minX,
         double minY,
-        double invSize)
+        double invSize,
+        TriangulationWorkspace workspace)
     {
         Node a = start;
 
@@ -599,11 +647,11 @@ public static class Earcut
                 {
                     Node c = SplitPolygon(a, b);
 
-                    a = FilterPoints(a, a.Next)!;
-                    c = FilterPoints(c, c.Next)!;
+                    a = FilterPoints(a, a.Next, workspace)!;
+                    c = FilterPoints(c, c.Next, workspace)!;
 
-                    EarcutLinked(a, triangles, minX, minY, invSize);
-                    EarcutLinked(c, triangles, minX, minY, invSize);
+                    EarcutLinked(a, triangles, minX, minY, invSize, workspace);
+                    EarcutLinked(c, triangles, minX, minY, invSize, workspace);
                     return;
                 }
 
@@ -625,7 +673,8 @@ public static class Earcut
         ReadOnlySpan<double> data,
         ReadOnlySpan<int> holeIndices,
         Node outerNode,
-        int dim)
+        int dim,
+        TriangulationWorkspace workspace)
     {
         var queue = new Node[holeIndices.Length];
         int queueCount = 0;
@@ -653,33 +702,50 @@ public static class Earcut
         queue.AsSpan(0, queueCount).Sort(static (a, b) =>
         {
             double dx = a.X - b.X;
-            if (dx != 0.0) return dx < 0.0 ? -1 : 1;
+            if (dx != 0.0)
+            {
+                return dx < 0.0 ? -1 : 1;
+            }
+
             double dy = a.Y - b.Y;
-            if (dy != 0.0) return dy < 0.0 ? -1 : 1;
+            if (dy != 0.0)
+            {
+                return dy < 0.0 ? -1 : 1;
+            }
+
             double aSlope = (a.Next!.Y - a.Y) / (a.Next.X - a.X);
             double bSlope = (b.Next!.Y - b.Y) / (b.Next.X - b.X);
             return aSlope.CompareTo(bSlope);
         });
 
         // Build block-bbox index seeded with the outer ring.
-        BuildBlockIndex(data.Length / dim, holeIndices.Length);
-        IndexSegment(outerNode, outerNode);   // outerNode === outerNode → full ring
+        BuildBlockIndex(workspace, data.Length / dim, holeIndices.Length);
+        IndexSegment(outerNode, outerNode, workspace);   // outerNode === outerNode → full ring
 
         // Process holes from left to right; indexActive keeps GrowBlock live.
-        s_indexActive = true;
-        for (int i = 0; i < queueCount; i++)
+        workspace.IndexActive = true;
+        try
         {
-            outerNode = EliminateHole(queue[i], outerNode);
+            for (int i = 0; i < queueCount; i++)
+            {
+                outerNode = EliminateHole(queue[i], outerNode, workspace);
+            }
         }
-        s_indexActive = false;
+        finally
+        {
+            workspace.IndexActive = false;
+        }
 
         // Collapse collinear/coincident points across the whole merged ring before clipping.
-        return FilterPoints(outerNode)!;
+        return FilterPoints(outerNode, workspace: workspace)!;
     }
 
-    private static Node EliminateHole(Node hole, Node outerNode)
+    private static Node EliminateHole(
+        Node hole,
+        Node outerNode,
+        TriangulationWorkspace workspace)
     {
-        Node? bridge = FindHoleBridge(hole, outerNode);
+        Node? bridge = FindHoleBridge(hole, outerNode, workspace);
 
         if (bridge is null)
         {
@@ -690,62 +756,98 @@ public static class Earcut
 
         // Index the merged-in segment before filtering.
         Node bridge2 = bridgeReverse.Next!;
-        IndexSegment(bridge, bridge2.Next!);
+        IndexSegment(bridge, bridge2.Next!, workspace);
 
         // Heal collinear/coincident points around the two new slit edges.
-        FilterPoints(bridgeReverse, bridgeReverse.Next);
-        return FilterPoints(bridge, bridge.Next)!;
+        FilterPoints(bridgeReverse, bridgeReverse.Next, workspace);
+        return FilterPoints(bridge, bridge.Next, workspace)!;
     }
 
     // ──────────────── block-bbox index for FindHoleBridge ────────────────
 
-    private static void BuildBlockIndex(int maxNodes, int numHoles)
-    {
-        int maxBlocks = (maxNodes + 2 * numHoles + K - 1) / K + numHoles + 2;
-        int bboxNeeded = maxBlocks * 4;
-
-        if (s_blockBBox is null || s_blockBBox.Length < bboxNeeded)
-            s_blockBBox = new double[bboxNeeded];
-
-        if (s_blockHead is null || s_blockHead.Length < maxBlocks)
-            s_blockHead = new Node[maxBlocks];
-
-        if (s_blockStop is null || s_blockStop.Length < maxBlocks)
-            s_blockStop = new Node[maxBlocks];
-
-        s_numBlocks = 0;
-    }
+    private static void BuildBlockIndex(
+        TriangulationWorkspace workspace,
+        int maxNodes,
+        int numHoles) =>
+        workspace.EnsureBlockIndexCapacity(maxNodes, numHoles, BlockSize);
 
     /// <summary>
     /// Index the ring segment head..stop (exclusive; head==stop means the whole ring)
-    /// as ceil(len/K) blocks, each with a [minX,minY,maxX,maxY] bbox.
+    /// as ceil(len/BlockSize) blocks, each with a [minX,minY,maxX,maxY] bbox.
     /// Reuses <see cref="Node.Z"/> as the owning block index during this phase.
     /// </summary>
-    private static void IndexSegment(Node head, Node stop)
+    private static void IndexSegment(
+        Node head,
+        Node stop,
+        TriangulationWorkspace workspace)
     {
         Node p = head;
         do
         {
-            int b = s_numBlocks++;
-            s_blockHead![b] = p;
-            double minX = double.PositiveInfinity, minY = double.PositiveInfinity;
-            double maxX = double.NegativeInfinity, maxY = double.NegativeInfinity;
-            int k = 0;
+            int blockIndex = workspace.BlockCount++;
+            workspace.BlockHeads![blockIndex] = p;
+            double minX = double.PositiveInfinity;
+            double minY = double.PositiveInfinity;
+            double maxX = double.NegativeInfinity;
+            double maxY = double.NegativeInfinity;
+            int edgeCount = 0;
             do
             {
-                Node c = p.Next!;
-                p.Z = b;    // reuse Z as block index during eliminateHoles
-                if (p.X < minX) minX = p.X; if (p.X > maxX) maxX = p.X;
-                if (p.Y < minY) minY = p.Y; if (p.Y > maxY) maxY = p.Y;
-                if (c.X < minX) minX = c.X; if (c.X > maxX) maxX = c.X;
-                if (c.Y < minY) minY = c.Y; if (c.Y > maxY) maxY = c.Y;
-                p = c;
-            } while (++k < K && !ReferenceEquals(p, stop));
-            s_blockStop![b] = p;
-            int g = b * 4;
-            s_blockBBox![g] = minX; s_blockBBox[g + 1] = minY;
-            s_blockBBox[g + 2] = maxX; s_blockBBox[g + 3] = maxY;
-        } while (!ReferenceEquals(p, stop));
+                Node current = p.Next!;
+                p.Z = blockIndex;
+                if (p.X < minX)
+                {
+                    minX = p.X;
+                }
+
+                if (p.X > maxX)
+                {
+                    maxX = p.X;
+                }
+
+                if (p.Y < minY)
+                {
+                    minY = p.Y;
+                }
+
+                if (p.Y > maxY)
+                {
+                    maxY = p.Y;
+                }
+
+                if (current.X < minX)
+                {
+                    minX = current.X;
+                }
+
+                if (current.X > maxX)
+                {
+                    maxX = current.X;
+                }
+
+                if (current.Y < minY)
+                {
+                    minY = current.Y;
+                }
+
+                if (current.Y > maxY)
+                {
+                    maxY = current.Y;
+                }
+
+                p = current;
+            }
+            while (++edgeCount < BlockSize && !ReferenceEquals(p, stop));
+
+            workspace.BlockStops![blockIndex] = p;
+            int bboxIndex = blockIndex * 4;
+            double[] blockBoundingBoxes = workspace.BlockBoundingBoxes!;
+            blockBoundingBoxes[bboxIndex] = minX;
+            blockBoundingBoxes[bboxIndex + 1] = minY;
+            blockBoundingBoxes[bboxIndex + 2] = maxX;
+            blockBoundingBoxes[bboxIndex + 3] = maxY;
+        }
+        while (!ReferenceEquals(p, stop));
     }
 
     /// <summary>
@@ -753,30 +855,55 @@ public static class Earcut
     /// to cover tail so the leftward-ray prune cannot false-skip the new edge.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void GrowBlock(Node head, Node tail)
+    private static void GrowBlock(
+        Node head,
+        Node tail,
+        TriangulationWorkspace workspace)
     {
-        int g = head.Z * 4;
-        if (tail.X < s_blockBBox![g])     s_blockBBox[g]     = tail.X;
-        if (tail.Y < s_blockBBox[g + 1])  s_blockBBox[g + 1] = tail.Y;
-        if (tail.X > s_blockBBox[g + 2])  s_blockBBox[g + 2] = tail.X;
-        if (tail.Y > s_blockBBox[g + 3])  s_blockBBox[g + 3] = tail.Y;
+        int bboxIndex = head.Z * 4;
+        double[] blockBoundingBoxes = workspace.BlockBoundingBoxes!;
+        if (tail.X < blockBoundingBoxes[bboxIndex])
+        {
+            blockBoundingBoxes[bboxIndex] = tail.X;
+        }
+
+        if (tail.Y < blockBoundingBoxes[bboxIndex + 1])
+        {
+            blockBoundingBoxes[bboxIndex + 1] = tail.Y;
+        }
+
+        if (tail.X > blockBoundingBoxes[bboxIndex + 2])
+        {
+            blockBoundingBoxes[bboxIndex + 2] = tail.X;
+        }
+
+        if (tail.Y > blockBoundingBoxes[bboxIndex + 3])
+        {
+            blockBoundingBoxes[bboxIndex + 3] = tail.Y;
+        }
     }
 
-    private static Node LiveBlockStop(int b)
+    private static Node LiveBlockStop(int blockIndex, TriangulationWorkspace workspace)
     {
-        Node stop = s_blockStop![b];
+        Node stop = workspace.BlockStops![blockIndex];
         while (!ReferenceEquals(stop.Prev!.Next, stop))
+        {
             stop = stop.Next!;
-        s_blockStop[b] = stop;
+        }
+
+        workspace.BlockStops[blockIndex] = stop;
         return stop;
     }
 
-    private static Node LiveBlockHead(int b)
+    private static Node LiveBlockHead(int blockIndex, TriangulationWorkspace workspace)
     {
-        Node head = s_blockHead![b];
+        Node head = workspace.BlockHeads![blockIndex];
         while (!ReferenceEquals(head.Prev!.Next, head))
+        {
             head = head.Next!;
-        s_blockHead[b] = head;
+        }
+
+        workspace.BlockHeads[blockIndex] = head;
         return head;
     }
 
@@ -784,7 +911,10 @@ public static class Earcut
     /// David Eberly's algorithm for finding a bridge between a hole and the
     /// outer polygon — accelerated with the block-bbox index.
     /// </summary>
-    private static Node? FindHoleBridge(Node hole, Node outerNode)
+    private static Node? FindHoleBridge(
+        Node hole,
+        Node outerNode,
+        TriangulationWorkspace workspace)
     {
         double hx = hole.X;
         double hy = hole.Y;
@@ -796,16 +926,21 @@ public static class Earcut
             return outerNode;
         }
 
-        double[] bbox = s_blockBBox!;
+        double[] blockBoundingBoxes = workspace.BlockBoundingBoxes!;
 
         // First scan: find the leftward ray crossing to locate the best bridge candidate.
-        for (int b = 0, g = 0; b < s_numBlocks; b++, g += 4)
+        for (int blockIndex = 0, bboxIndex = 0; blockIndex < workspace.BlockCount; blockIndex++, bboxIndex += 4)
         {
-            if (hy < bbox[g + 1] || hy > bbox[g + 3] || bbox[g] > hx || bbox[g + 2] <= qx)
+            if (hy < blockBoundingBoxes[bboxIndex + 1] ||
+                hy > blockBoundingBoxes[bboxIndex + 3] ||
+                blockBoundingBoxes[bboxIndex] > hx ||
+                blockBoundingBoxes[bboxIndex + 2] <= qx)
+            {
                 continue;
+            }
 
-            Node bs = LiveBlockStop(b);
-            Node p = LiveBlockHead(b);
+            Node blockStop = LiveBlockStop(blockIndex, workspace);
+            Node p = LiveBlockHead(blockIndex, workspace);
             do
             {
                 if (ReferenceEquals(p.Prev!.Next, p))   // skip removed nodes
@@ -821,12 +956,16 @@ public static class Earcut
                         {
                             qx = x;
                             m = p.X < p.Next.X ? p : p.Next;
-                            if (x == hx) return m;  // hole touches outer segment
+                            if (x == hx)
+                            {
+                                return m;
+                            }
                         }
                     }
                 }
                 p = p.Next!;
-            } while (!ReferenceEquals(p, bs));
+            }
+            while (!ReferenceEquals(p, blockStop));
         }
 
         if (m is null)
@@ -841,13 +980,18 @@ public static class Earcut
         double tanMin = double.PositiveInfinity;
 
         // Second scan: find the point of minimum angle within the candidate triangle.
-        for (int b = 0, g = 0; b < s_numBlocks; b++, g += 4)
+        for (int blockIndex = 0, bboxIndex = 0; blockIndex < workspace.BlockCount; blockIndex++, bboxIndex += 4)
         {
-            if (bbox[g + 2] < mx || bbox[g] > hx || bbox[g + 3] < tminY || bbox[g + 1] > tmaxY)
+            if (blockBoundingBoxes[bboxIndex + 2] < mx ||
+                blockBoundingBoxes[bboxIndex] > hx ||
+                blockBoundingBoxes[bboxIndex + 3] < tminY ||
+                blockBoundingBoxes[bboxIndex + 1] > tmaxY)
+            {
                 continue;
+            }
 
-            Node bs = LiveBlockStop(b);
-            Node p = LiveBlockHead(b);
+            Node blockStop = LiveBlockStop(blockIndex, workspace);
+            Node p = LiveBlockHead(blockIndex, workspace);
             do
             {
                 if (ReferenceEquals(p.Prev!.Next, p) &&
@@ -870,7 +1014,8 @@ public static class Earcut
                     }
                 }
                 p = p.Next!;
-            } while (!ReferenceEquals(p, bs));
+            }
+            while (!ReferenceEquals(p, blockStop));
         }
 
         return m;
@@ -886,16 +1031,20 @@ public static class Earcut
         Node start,
         double minX,
         double minY,
-        double invSize)
+        double invSize,
+        TriangulationWorkspace workspace)
     {
         // Count nodes.
-        int n = 0;
+        int nodeCount = 0;
         Node p = start;
-        do { n++; p = p.Next!; } while (!ReferenceEquals(p, start));
+        do
+        {
+            nodeCount++;
+            p = p.Next!;
+        }
+        while (!ReferenceEquals(p, start));
 
-        // Ensure scratch arrays.
-        if (s_sortArr is null || s_sortArr.Length < n) { s_sortArr = new Node[n]; s_sortBuf = new Node[n]; }
-        if (s_zArr   is null || s_zArr.Length   < n) { s_zArr   = new uint[n];  s_zBuf   = new uint[n];  }
+        workspace.EnsureSortCapacity(nodeCount);
 
         // Collect nodes and (re-)compute z-order values; Z may hold a stale block index.
         int i = 0;
@@ -903,60 +1052,68 @@ public static class Earcut
         do
         {
             p.Z = ZOrder(p.X, p.Y, minX, minY, invSize);
-            s_sortArr[i++] = p;
+            workspace.SortNodes![i++] = p;
             p = p.Next!;
         } while (!ReferenceEquals(p, start));
 
-        SortNodes(n);
+        SortNodes(nodeCount, workspace);
 
         // Relink the z-order list.
         Node? prev = null;
-        for (int j = 0; j < n; j++)
+        for (int j = 0; j < nodeCount; j++)
         {
-            Node node = s_sortArr[j];
+            Node node = workspace.SortNodes![j];
             node.PrevZ = prev;
-            if (prev is not null) prev.NextZ = node;
+            if (prev is not null)
+            {
+                prev.NextZ = node;
+            }
+
             prev = node;
         }
         prev!.NextZ = null;
 
         // Clear node references so the GC can collect them after this call.
-        Array.Clear(s_sortArr, 0, n);
-        if (s_sortBuf is not null) Array.Clear(s_sortBuf, 0, n);
+        Array.Clear(workspace.SortNodes!, 0, nodeCount);
+        Array.Clear(workspace.SortBuffer!, 0, nodeCount);
     }
 
     /// <summary>
-    /// Sort the first <paramref name="n"/> entries of <see cref="s_sortArr"/> by z-order:
+    /// Sort the first <paramref name="n"/> entries of <see cref="TriangulationWorkspace.SortNodes"/> by z-order:
     /// insertion sort for small n, four-pass LSD radix sort otherwise.
-    /// The result is always in <see cref="s_sortArr"/> (even number of passes).
+    /// The result is always in <see cref="TriangulationWorkspace.SortNodes"/> (even number of passes).
     /// </summary>
-    private static void SortNodes(int n)
+    private static void SortNodes(int n, TriangulationWorkspace workspace)
     {
         if (n <= 32)
         {
             for (int i = 1; i < n; i++)
             {
-                Node node = s_sortArr![i];
+                Node node = workspace.SortNodes![i];
                 uint z = (uint)node.Z;
                 int j = i - 1;
-                while (j >= 0 && (uint)s_sortArr[j].Z > z)
+                while (j >= 0 && (uint)workspace.SortNodes[j].Z > z)
                 {
-                    s_sortArr[j + 1] = s_sortArr[j];
+                    workspace.SortNodes[j + 1] = workspace.SortNodes[j];
                     j--;
                 }
-                s_sortArr[j + 1] = node;
+
+                workspace.SortNodes[j + 1] = node;
             }
             return;
         }
 
         // Copy z values for the radix passes.
-        for (int i = 0; i < n; i++) s_zArr![i] = (uint)s_sortArr![i].Z;
+        for (int i = 0; i < n; i++)
+        {
+            workspace.SortKeys![i] = (uint)workspace.SortNodes![i].Z;
+        }
 
-        // Four 8-bit LSD passes; even pass count returns result in s_sortArr.
-        RadixPass(n, s_sortArr!, s_zArr!, s_sortBuf!, s_zBuf!, 0);
-        RadixPass(n, s_sortBuf!, s_zBuf!, s_sortArr!, s_zArr!, 8);
-        RadixPass(n, s_sortArr!, s_zArr!, s_sortBuf!, s_zBuf!, 16);
-        RadixPass(n, s_sortBuf!, s_zBuf!, s_sortArr!, s_zArr!, 24);
+        // Four 8-bit LSD passes; even pass count returns result in SortNodes.
+        RadixPass(n, workspace.SortNodes!, workspace.SortKeys!, workspace.SortBuffer!, workspace.SortKeyBuffer!, 0, workspace);
+        RadixPass(n, workspace.SortBuffer!, workspace.SortKeyBuffer!, workspace.SortNodes!, workspace.SortKeys!, 8, workspace);
+        RadixPass(n, workspace.SortNodes!, workspace.SortKeys!, workspace.SortBuffer!, workspace.SortKeyBuffer!, 16, workspace);
+        RadixPass(n, workspace.SortBuffer!, workspace.SortKeyBuffer!, workspace.SortNodes!, workspace.SortKeys!, 24, workspace);
     }
 
     /// <summary>
@@ -966,31 +1123,35 @@ public static class Earcut
     /// </summary>
     private static void RadixPass(
         int n,
-        Node[] src, uint[] srcZ,
-        Node[] dst,  uint[] dstZ,
-        int shift)
+        Node[] src,
+        uint[] srcZ,
+        Node[] dst,
+        uint[] dstZ,
+        int shift,
+        TriangulationWorkspace workspace)
     {
-        if (s_counts is null || s_counts.Length < 256)
-            s_counts = new uint[256];
-        else
-            Array.Clear(s_counts, 0, 256);
+        uint[] counts = workspace.Counts;
+        Array.Clear(counts, 0, counts.Length);
 
-        for (int i = 0; i < n; i++) s_counts[(srcZ[i] >> shift) & 0xff]++;
+        for (int i = 0; i < n; i++)
+        {
+            counts[(srcZ[i] >> shift) & 0xff]++;
+        }
 
         uint sum = 0;
-        for (int bkt = 0; bkt < 256; bkt++)
+        for (int bucket = 0; bucket < counts.Length; bucket++)
         {
-            uint c = s_counts[bkt];
-            s_counts[bkt] = sum;
-            sum += c;
+            uint count = counts[bucket];
+            counts[bucket] = sum;
+            sum += count;
         }
 
         for (int i = 0; i < n; i++)
         {
             uint z = srcZ[i];
-            uint pos = s_counts[(z >> shift) & 0xff]++;
-            dst[pos] = src[i];
-            dstZ[pos] = z;
+            uint position = counts[(z >> shift) & 0xff]++;
+            dst[position] = src[i];
+            dstZ[position] = z;
         }
     }
 
@@ -1075,14 +1236,34 @@ public static class Earcut
 
         if (((o1 > 0 && o2 < 0) || (o1 < 0 && o2 > 0)) &&
             ((o3 > 0 && o4 < 0) || (o3 < 0 && o4 > 0)))
+        {
             return true;
+        }
 
-        if (!includeBoundary) return false;
+        if (!includeBoundary)
+        {
+            return false;
+        }
 
-        if (o1 == 0.0 && OnSegment(p1, p2, q1)) return true;
-        if (o2 == 0.0 && OnSegment(p1, q2, q1)) return true;
-        if (o3 == 0.0 && OnSegment(p2, p1, q2)) return true;
-        if (o4 == 0.0 && OnSegment(p2, q1, q2)) return true;
+        if (o1 == 0.0 && OnSegment(p1, p2, q1))
+        {
+            return true;
+        }
+
+        if (o2 == 0.0 && OnSegment(p1, q2, q1))
+        {
+            return true;
+        }
+
+        if (o3 == 0.0 && OnSegment(p2, p1, q2))
+        {
+            return true;
+        }
+
+        if (o4 == 0.0 && OnSegment(p2, q1, q2))
+        {
+            return true;
+        }
 
         return false;
     }
@@ -1113,7 +1294,10 @@ public static class Earcut
             }
             if (p.I != a.I && n.I != a.I && p.I != b.I && n.I != b.I &&
                 Intersects(p, n, a, b))
+            {
                 return true;
+            }
+
             p = n;
         }
         while (!ReferenceEquals(p, a));
@@ -1214,7 +1398,7 @@ public static class Earcut
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void RemoveNode(Node p)
+    private static void RemoveNode(Node p, TriangulationWorkspace? workspace = null)
     {
         Node prev = p.Prev!;
         Node next = p.Next!;
@@ -1222,7 +1406,10 @@ public static class Earcut
         prev.Next = next;
         p.PrevZ?.NextZ = p.NextZ;
         p.NextZ?.PrevZ = p.PrevZ;
-        if (s_indexActive) GrowBlock(prev, next);
+        if (workspace?.IndexActive == true)
+        {
+            GrowBlock(prev, next, workspace);
+        }
     }
 
     private static double SignedArea(
@@ -1287,21 +1474,99 @@ public static class Earcut
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int NextHE(int e) => e - e % 3 + (e + 1) % 3;
 
-    private static void EnsureRefineScratch(int n)
+    private sealed class TriangulationWorkspace
     {
-        if (s_edgeStack is null || s_edgeStack.Length < n) s_edgeStack = new int[n];
-        if (s_refHe     is null || s_refHe.Length     < n) s_refHe     = new int[n];
-        if (s_edgeStamp is null || s_edgeStamp.Length < n) s_edgeStamp = new byte[n];
+        public bool FilteredOut { get; set; }
 
-        int size = 1;
-        while (size < n * 4) size <<= 1; // power-of-two, load factor ≤ 0.25
+        public bool IndexActive { get; set; }
 
-        if (s_hTable is null || s_hTable.Length < size)
+        public double[]? BlockBoundingBoxes { get; private set; }
+
+        public int BlockCount { get; set; }
+
+        public Node[]? BlockHeads { get; private set; }
+
+        public Node[]? BlockStops { get; private set; }
+
+        public Node[]? SortNodes { get; private set; }
+
+        public Node[]? SortBuffer { get; private set; }
+
+        public uint[]? SortKeys { get; private set; }
+
+        public uint[]? SortKeyBuffer { get; private set; }
+
+        public uint[] Counts { get; } = new uint[256];
+
+        public void EnsureBlockIndexCapacity(int maxNodes, int numHoles, int blockSize)
         {
-            s_hTable = new int[size];
-            s_hStamp = new uint[size];
+            int maxBlocks = (maxNodes + 2 * numHoles + blockSize - 1) / blockSize + numHoles + 2;
+            int bboxLength = maxBlocks * 4;
+
+            if (BlockBoundingBoxes is null || BlockBoundingBoxes.Length < bboxLength)
+            {
+                BlockBoundingBoxes = new double[bboxLength];
+            }
+
+            if (BlockHeads is null || BlockHeads.Length < maxBlocks)
+            {
+                BlockHeads = new Node[maxBlocks];
+            }
+
+            if (BlockStops is null || BlockStops.Length < maxBlocks)
+            {
+                BlockStops = new Node[maxBlocks];
+            }
+
+            BlockCount = 0;
         }
-        s_hMask = size - 1;
+
+        public void EnsureSortCapacity(int nodeCount)
+        {
+            if (SortNodes is null || SortNodes.Length < nodeCount)
+            {
+                SortNodes = new Node[nodeCount];
+                SortBuffer = new Node[nodeCount];
+            }
+
+            if (SortKeys is null || SortKeys.Length < nodeCount)
+            {
+                SortKeys = new uint[nodeCount];
+                SortKeyBuffer = new uint[nodeCount];
+            }
+        }
+    }
+
+    private sealed class RefineWorkspace
+    {
+        public RefineWorkspace(int triangleIndexCount)
+        {
+            EdgeStack = new int[triangleIndexCount];
+            HalfEdges = new int[triangleIndexCount];
+            EdgeStamp = new byte[triangleIndexCount];
+
+            int hashSize = 1;
+            while (hashSize < triangleIndexCount * 4)
+            {
+                hashSize <<= 1;
+            }
+
+            HashTable = new int[hashSize];
+            HashStamp = new uint[hashSize];
+            HashMask = hashSize - 1;
+        }
+
+        public int[] EdgeStack { get; }
+
+        public int[] HalfEdges { get; }
+
+        public int[] HashTable { get; }
+
+        public uint[] HashStamp { get; }
+
+        public byte[] EdgeStamp { get; }
+
+        public int HashMask { get; }
     }
 
     // ─────────────────────── triangle accumulator ──────────────────────────

@@ -80,7 +80,7 @@ public class TriangulationBenchmarks
     [Benchmark]
     public IReadOnlyList<int> TriangulateComplexPolygon()
     {
-        var r =  Earcut.Triangulate(_complexPolygon);
+        var r = Earcut.Triangulate(_complexPolygon);
         if (r.Length == 0)
         {
             throw new Exception();

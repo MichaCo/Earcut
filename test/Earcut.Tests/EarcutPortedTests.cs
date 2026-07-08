@@ -237,10 +237,25 @@ public class EarcutPortedTests
     {
         int n = 30;
         var outer = new List<double[]>();
-        for (int x = 0; x <= n; x++) outer.Add([x, 0]);
-        for (int y = 1; y <= n; y++) outer.Add([n, y]);
-        for (int x = n - 1; x >= 0; x--) outer.Add([x, n]);
-        for (int y = n - 1; y >= 1; y--) outer.Add([0, y]);
+        for (int x = 0; x <= n; x++)
+        {
+            outer.Add([x, 0]);
+        }
+
+        for (int y = 1; y <= n; y++)
+        {
+            outer.Add([n, y]);
+        }
+
+        for (int x = n - 1; x >= 0; x--)
+        {
+            outer.Add([x, n]);
+        }
+
+        for (int y = n - 1; y >= 1; y--)
+        {
+            outer.Add([0, y]);
+        }
 
         double[][] Rect(double x0, double y0, double w, double h) =>
             [[x0, y0], [x0, y0 + h], [x0 + w, y0 + h], [x0 + w, y0]];
@@ -274,7 +289,7 @@ public class EarcutPortedTests
         double perimeter = 0;
         for (int i = 0; i < triangles.Length; i += 3)
         {
-            double ax = vertices[triangles[i]     * dim], ay = vertices[triangles[i]     * dim + 1];
+            double ax = vertices[triangles[i] * dim], ay = vertices[triangles[i] * dim + 1];
             double bx = vertices[triangles[i + 1] * dim], by = vertices[triangles[i + 1] * dim + 1];
             double cx = vertices[triangles[i + 2] * dim], cy = vertices[triangles[i + 2] * dim + 1];
             perimeter += Math.Sqrt((ax - bx) * (ax - bx) + (ay - by) * (ay - by))
@@ -311,7 +326,10 @@ public class EarcutPortedTests
         for (int a = 0; a < triangles.Length; a++)
         {
             int b = halfEdges[a];
-            if (b == -1 || a > b) continue;
+            if (b == -1 || a > b)
+            {
+                continue;
+            }
 
             int a0 = a - a % 3;
             int b0 = b - b % 3;
@@ -326,7 +344,10 @@ public class EarcutPortedTests
             double x1 = vertices[p1 * dim], y1 = vertices[p1 * dim + 1];
 
             bool convex = Orient(x0, y0, xr, yr, x1, y1) > 0 && Orient(x0, y0, x1, y1, xl, yl) > 0;
-            if (convex && !InCircle(x0, y0, xr, yr, xl, yl, x1, y1)) illegal++;
+            if (convex && !InCircle(x0, y0, xr, yr, xl, yl, x1, y1))
+            {
+                illegal++;
+            }
         }
         return illegal;
     }
