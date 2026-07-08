@@ -70,6 +70,7 @@ var (vertices, holes, dimensions) = Earcut.Flatten(testPoints);
 var sw = Stopwatch.StartNew();
 int[] result = Earcut.Triangulate(vertices, holes, dimensions);
 sw.Stop();
+Console.WriteLine($"earcut: {sw.ElapsedMilliseconds}ms");
 
 if (refineOutput)
 {
@@ -79,7 +80,6 @@ if (refineOutput)
     Console.WriteLine($"refine: {swRefine.ElapsedMilliseconds}ms");
 }
 
-Console.WriteLine($"earcut: {sw.ElapsedMilliseconds}ms");
 Console.WriteLine($"deviation: {Earcut.Deviation(vertices, holes, dimensions, result)}");
 
 // Build triangle vertex list (each entry is a [x,y] point in polygon coordinates)

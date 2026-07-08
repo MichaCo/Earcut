@@ -122,6 +122,8 @@ public class EarcutPortedTests
     {
         double[] data = [10, 0, 0, 50, 60, 60, 70, 10];
         var indices = Earcut.Triangulate(data);
+        // This simple quad is expected to triangulate deterministically; keep asserting
+        // the exact index order so upstream-port regressions stay visible.
         int[] expected = [1, 0, 3, 1, 3, 2];
         Assert.Equal(expected, indices);
     }
@@ -131,6 +133,7 @@ public class EarcutPortedTests
     {
         double[] data = [10, 0, 0, 0, 50, 0, 60, 60, 0, 70, 10, 0];
         var indices = Earcut.Triangulate(data, [], 3);
+        // The third coordinate should not affect the deterministic triangulation order.
         int[] expected = [1, 0, 3, 1, 3, 2];
         Assert.Equal(expected, indices);
     }
