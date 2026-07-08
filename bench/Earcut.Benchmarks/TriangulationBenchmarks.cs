@@ -20,6 +20,9 @@ public class TriangulationBenchmarks
     private int[] _waterHoles = null!;
     private double[] _waterHugeVertices = null!;
     private int[] _waterHugeHoles = null!;
+    private double[] _waterHuge3Vertices = null!;
+    private int[] _waterHuge3Holes = null!;
+    private int[] _waterHuge3Triangles = null!;
 
     [GlobalSetup]
     public void Setup()
@@ -44,6 +47,10 @@ public class TriangulationBenchmarks
 
         // Load water-huge fixture
         LoadFixture("water-huge", out _waterHugeVertices, out _waterHugeHoles);
+
+        // Load water-huge3 fixture
+        LoadFixture("water-huge3", out _waterHuge3Vertices, out _waterHuge3Holes);
+        _waterHuge3Triangles = Earcut.Triangulate(_waterHuge3Vertices, _waterHuge3Holes);
     }
 
     private static void LoadFixture(string name, out double[] vertices, out int[] holes)
@@ -73,7 +80,7 @@ public class TriangulationBenchmarks
     [Benchmark]
     public IReadOnlyList<int> TriangulateComplexPolygon()
     {
-        var r =  Earcut.Triangulate(_complexPolygon);
+        var r = Earcut.Triangulate(_complexPolygon);
         if (r.Length == 0)
         {
             throw new Exception();
@@ -116,5 +123,25 @@ public class TriangulationBenchmarks
         }
 
         return r;
+    }
+
+    [Benchmark]
+    public IReadOnlyList<int> TriangulateWaterHuge3()
+    {
+        var r = Earcut.Triangulate(_waterHuge3Vertices, _waterHuge3Holes);
+        if (r.Length == 0)
+        {
+            throw new Exception();
+        }
+
+        return r;
+    }
+
+    [Benchmark]
+    public void RefineWaterHuge3()
+    {
+        // Copy the pre-computed triangles so each run starts from the same state.
+        var triangles = (int[])_waterHuge3Triangles.Clone();
+        Earcut.Refine(triangles, _waterHuge3Vertices);
     }
 }

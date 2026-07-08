@@ -13,6 +13,7 @@ using IOPath = System.IO.Path;
 
 string fixtureName = args.Length > 0 ? args[0] : "water";
 int rotation = args.Length > 1 ? int.Parse(args[1]) : 0;
+bool refineOutput = args.Length > 2 && args[2] == "--refine";
 
 // Load fixture
 string fixturesDir = IOPath.Combine(AppContext.BaseDirectory, "fixtures");
@@ -69,8 +70,16 @@ var (vertices, holes, dimensions) = Earcut.Flatten(testPoints);
 var sw = Stopwatch.StartNew();
 int[] result = Earcut.Triangulate(vertices, holes, dimensions);
 sw.Stop();
-
 Console.WriteLine($"earcut: {sw.ElapsedMilliseconds}ms");
+
+if (refineOutput)
+{
+    var swRefine = Stopwatch.StartNew();
+    Earcut.Refine(result, vertices, dimensions);
+    swRefine.Stop();
+    Console.WriteLine($"refine: {swRefine.ElapsedMilliseconds}ms");
+}
+
 Console.WriteLine($"deviation: {Earcut.Deviation(vertices, holes, dimensions, result)}");
 
 // Build triangle vertex list (each entry is a [x,y] point in polygon coordinates)

@@ -64,6 +64,10 @@
       "commandName": "Project",
       "commandLineArgs": "issue142"
     },
+    "issue147": {
+      "commandName": "Project",
+      "commandLineArgs": "issue147"
+    },
     "issue149": {
       "commandName": "Project",
       "commandLineArgs": "issue149"
