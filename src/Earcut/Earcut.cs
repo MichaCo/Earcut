@@ -83,6 +83,10 @@ public static class Earcut
         }
 
         EarcutLinked(outerNode, triangles, minX, minY, invSize, workspace);
+        while (workspace.SplitStack is { Count: > 0 } splitStack)
+        {
+            EarcutLinked(splitStack.Pop(), triangles, minX, minY, invSize, workspace);
+        }
 
         return triangles.ToArray();
     }
@@ -126,9 +130,19 @@ public static class Earcut
                 (data[a] - data[b]) * (data[c + 1] - data[a + 1]));
         }
 
-        return polygonArea == 0.0 && trianglesArea == 0.0
-            ? 0.0
-            : Math.Abs((trianglesArea - polygonArea) / polygonArea);
+        if (trianglesArea == 0.0)
+        {
+            double max = 0.0;
+            for (int i = 0; i < data.Length; i += dim)
+            {
+                max = Math.Max(max, Math.Max(Math.Abs(data[i]), Math.Abs(data[i + 1])));
+            }
+
+            const double machineEpsilon = 2.2204460492503131e-16;
+            return Math.Abs(polygonArea) <= data.Length * max * max * machineEpsilon ? 0.0 : 1.0;
+        }
+
+        return Math.Abs((trianglesArea - polygonArea) / polygonArea);
     }
 
     /// <summary>
@@ -149,12 +163,11 @@ public static class Earcut
 
         // Allocate arrays directly - no intermediate List<T>
         var vertices = new double[totalCoords];
-        var holes = new int[data.Length - 1];
+        var holes = new int[Math.Max(0, data.Length - 1)];
 
         int vertexIndex = 0;
         int holeIndex = 0;
         int holeCount = 0;
-        int prevLen = 0;
 
         foreach (double[][] ring in data)
         {
@@ -164,16 +177,15 @@ public static class Earcut
                 vertexIndex += dimensions;
             }
 
-            if (prevLen > 0)
+            if (holeIndex > 0 && ring.Length > 0)
             {
-                holeIndex += prevLen;
                 holes[holeCount++] = holeIndex;
             }
 
-            prevLen = ring.Length;
+            holeIndex += ring.Length;
         }
 
-        return (vertices, holes, dimensions);
+        return (vertices, holes.AsSpan(0, holeCount).ToArray(), dimensions);
     }
 
     /// <summary>
@@ -192,6 +204,23 @@ public static class Earcut
         if (n < 6)
         {
             return;
+        }
+
+        bool clockwise = false;
+        for (int k = 0; k < n; k += 3)
+        {
+            int a = triangles[k] * dim;
+            int b = triangles[k + 1] * dim;
+            int c = triangles[k + 2] * dim;
+            double orientation = Orient(
+                coords[a], coords[a + 1],
+                coords[b], coords[b + 1],
+                coords[c], coords[c + 1]);
+            if (orientation != 0.0)
+            {
+                clockwise = orientation < 0.0;
+                break;
+            }
         }
 
         var workspace = new RefineWorkspace(n);
@@ -260,8 +289,8 @@ public static class Earcut
             int bl = b0 + (b + 2) % 3;
             int br = b0 + (b + 1) % 3;
             int p0 = triangles[ar];
-            int pr = triangles[a];
-            int pl = triangles[al];
+            int pr = triangles[clockwise ? al : a];
+            int pl = triangles[clockwise ? a : al];
             int p1 = triangles[bl];
 
             double x0 = coords[p0 * dim];
@@ -439,6 +468,7 @@ public static class Earcut
 
         Node stop = ear;
         bool cured = false;
+        bool convex = invSize != 0.0 && IsConvex(ear);
 
         while (!ReferenceEquals(ear!.Prev, ear.Next))
         {
@@ -446,9 +476,10 @@ public static class Earcut
             Node next = ear.Next!;
 
             if (Area(prev, ear, next) < 0.0 &&
-                (invSize != 0.0
-                    ? IsEarHashed(ear, minX, minY, invSize)
-                    : IsEar(ear)))
+                (convex ||
+                 (invSize != 0.0
+                     ? IsEarHashed(ear, minX, minY, invSize)
+                     : IsEar(ear))))
             {
                 // Emit triangle.
                 triangles.Add(prev.I, ear.I, next.I);
@@ -460,6 +491,7 @@ public static class Earcut
                 continue;
             }
 
+            convex = false;
             ear = next;
 
             if (ReferenceEquals(ear, stop))
@@ -483,10 +515,27 @@ public static class Earcut
                 }
 
                 // Last resort: split the polygon.
-                SplitEarcut(ear, triangles, minX, minY, invSize, workspace);
+                SplitEarcut(ear, workspace);
                 break;
             }
         }
+    }
+
+    private static bool IsConvex(Node start)
+    {
+        Node p = start;
+        do
+        {
+            if (Area(p.Prev!, p, p.Next!) >= 0.0)
+            {
+                return false;
+            }
+
+            p = p.Next!;
+        }
+        while (!ReferenceEquals(p, start));
+
+        return true;
     }
 
     /// <summary>Checks whether a polygon node forms a valid ear.</summary>
@@ -629,10 +678,6 @@ public static class Earcut
     /// </summary>
     private static void SplitEarcut(
         Node start,
-        TriangleList triangles,
-        double minX,
-        double minY,
-        double invSize,
         TriangulationWorkspace workspace)
     {
         Node a = start;
@@ -650,8 +695,9 @@ public static class Earcut
                     a = FilterPoints(a, a.Next, workspace)!;
                     c = FilterPoints(c, c.Next, workspace)!;
 
-                    EarcutLinked(a, triangles, minX, minY, invSize, workspace);
-                    EarcutLinked(c, triangles, minX, minY, invSize, workspace);
+                    Stack<Node> splitStack = workspace.SplitStack ??= new Stack<Node>();
+                    splitStack.Push(c);
+                    splitStack.Push(a);
                     return;
                 }
 
@@ -758,8 +804,15 @@ public static class Earcut
         Node bridge2 = bridgeReverse.Next!;
         IndexSegment(bridge, bridge2.Next!, workspace);
 
-        // Heal collinear/coincident points around the two new slit edges.
-        FilterPoints(bridgeReverse, bridgeReverse.Next, workspace);
+        FilterPoints(bridgeReverse.Prev!, bridgeReverse, workspace);
+
+        Node a = bridge.Prev!;
+        if (Area(a, bridge, hole) == 0.0 &&
+            (a.X - bridge.X) * (hole.X - bridge.X) + (a.Y - bridge.Y) * (hole.Y - bridge.Y) < 0.0)
+        {
+            return bridge;
+        }
+
         return FilterPoints(bridge, bridge.Next, workspace)!;
     }
 
@@ -786,35 +839,15 @@ public static class Earcut
         {
             int blockIndex = workspace.BlockCount++;
             workspace.BlockHeads![blockIndex] = p;
-            double minX = double.PositiveInfinity;
-            double minY = double.PositiveInfinity;
-            double maxX = double.NegativeInfinity;
-            double maxY = double.NegativeInfinity;
+            double minX = p.X;
+            double minY = p.Y;
+            double maxX = p.X;
+            double maxY = p.Y;
             int edgeCount = 0;
             do
             {
                 Node current = p.Next!;
                 p.Z = blockIndex;
-                if (p.X < minX)
-                {
-                    minX = p.X;
-                }
-
-                if (p.X > maxX)
-                {
-                    maxX = p.X;
-                }
-
-                if (p.Y < minY)
-                {
-                    minY = p.Y;
-                }
-
-                if (p.Y > maxY)
-                {
-                    maxY = p.Y;
-                }
-
                 if (current.X < minX)
                 {
                     minX = current.X;
@@ -943,23 +976,20 @@ public static class Earcut
             Node p = LiveBlockHead(blockIndex, workspace);
             do
             {
-                if (ReferenceEquals(p.Prev!.Next, p))   // skip removed nodes
+                if (hole == p.Next!)
                 {
-                    if (hole == p.Next!)
+                    return p.Next;
+                }
+                else if (hy <= p.Y && hy >= p.Next!.Y && p.Next.Y != p.Y)
+                {
+                    double x = p.X + (hy - p.Y) * (p.Next.X - p.X) / (p.Next.Y - p.Y);
+                    if (x <= hx && x > qx)
                     {
-                        return p.Next;
-                    }
-                    else if (hy <= p.Y && hy >= p.Next!.Y && p.Next.Y != p.Y)
-                    {
-                        double x = p.X + (hy - p.Y) * (p.Next.X - p.X) / (p.Next.Y - p.Y);
-                        if (x <= hx && x > qx)
+                        qx = x;
+                        m = p.X < p.Next.X ? p : p.Next;
+                        if (x == hx)
                         {
-                            qx = x;
-                            m = p.X < p.Next.X ? p : p.Next;
-                            if (x == hx)
-                            {
-                                return m;
-                            }
+                            return m;
                         }
                     }
                 }
@@ -994,8 +1024,7 @@ public static class Earcut
             Node p = LiveBlockHead(blockIndex, workspace);
             do
             {
-                if (ReferenceEquals(p.Prev!.Next, p) &&
-                    hx >= p.X && p.X >= mx && hx != p.X &&
+                if (hx >= p.X && p.X >= mx && hx != p.X &&
                     PointInTriangle(
                         hy < my ? hx : qx, hy,
                         mx, my,
@@ -1479,6 +1508,8 @@ public static class Earcut
         public bool FilteredOut { get; set; }
 
         public bool IndexActive { get; set; }
+
+        public Stack<Node>? SplitStack { get; set; }
 
         public double[]? BlockBoundingBoxes { get; private set; }
 

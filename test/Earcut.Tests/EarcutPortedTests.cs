@@ -146,6 +146,69 @@ public class EarcutPortedTests
     }
 
     [Fact]
+    public void FlattenSkipsEmptyRings()
+    {
+        double[][] outer = [[0, 0], [10, 0], [10, 10], [0, 10]];
+        double[][] hole = [[2, 2], [4, 2], [3, 4]];
+
+        var expected = Earcut.Flatten([outer, hole]);
+        var actual = Earcut.Flatten([outer, [], hole, []]);
+
+        Assert.Equal(expected.Vertices, actual.Vertices);
+        Assert.Equal(expected.Holes, actual.Holes);
+        Assert.Equal(expected.Dimensions, actual.Dimensions);
+    }
+
+    [Fact]
+    public void DeviationTreatsCollinearPolygonRoundoffAsZero()
+    {
+        double[] vertices = [0.1, 0.2, 1.3, 2.6, 2.5, 5.0, 3.7, 7.4];
+        int[] triangles = Earcut.Triangulate(vertices);
+
+        Assert.Empty(triangles);
+        Assert.Equal(0.0, Earcut.Deviation(vertices, [], 2, triangles));
+        Assert.Equal(1.0, Earcut.Deviation([0, 0, 1, 0, 0, 1], [], 2, []));
+    }
+
+    [Fact]
+    public void LargeConvexPolygonTriangulates()
+    {
+        const int vertexCount = 100_000;
+        var vertices = new double[vertexCount * 2];
+        for (int i = 0; i < vertexCount; i++)
+        {
+            double angle = 2 * Math.PI * i / vertexCount;
+            vertices[2 * i] = Math.Cos(angle);
+            vertices[2 * i + 1] = Math.Sin(angle);
+        }
+
+        int[] triangles = Earcut.Triangulate(vertices);
+
+        Assert.Equal(vertexCount - 2, triangles.Length / 3);
+        Assert.True(Earcut.Deviation(vertices, [], 2, triangles) < 1e-12);
+    }
+
+    [Fact]
+    public void NestedSplitsTriangulateWithoutRecursiveProcessing()
+    {
+        const int holeCount = 600;
+        var vertices = new List<double> { -1, -holeCount, 2 * holeCount + 1, -holeCount, 2 * holeCount + 1, 7, -1, 7 };
+        var holes = new List<int>();
+        for (int i = 0; i < holeCount; i++)
+        {
+            holes.Add(vertices.Count / 2);
+            vertices.AddRange([1 + 2 * i, -i, 2 * i, 6 - i, 2 + 2 * i, 6 - i]);
+        }
+
+        double[] data = vertices.ToArray();
+        int[] holeIndices = holes.ToArray();
+        int[] triangles = Earcut.Triangulate(data, holeIndices);
+
+        Assert.Equal(3002, triangles.Length / 3);
+        Assert.Equal(0.0, Earcut.Deviation(data, holeIndices, 2, triangles));
+    }
+
+    [Fact]
     public void InfiniteLoop()
     {
         double[] data = [1, 2, 2, 2, 1, 2, 1, 1, 1, 2, 4, 1, 5, 1, 3, 2, 4, 2, 4, 1];
@@ -166,6 +229,19 @@ public class EarcutPortedTests
         int[] expected = [2, 3, 1, 3, 0, 1];
         Assert.Equal(expected, triangles);
         Assert.True(TrianglePerimeter(triangles, vertices) < beforePerimeter * 0.7);
+        Assert.Equal(0.0, Earcut.Deviation(vertices, [], 2, triangles));
+    }
+
+    [Fact]
+    public void RefineImprovesClockwiseQuadDiagonalAndKeepsWinding()
+    {
+        double[] vertices = [0, 0, 3, 0, 10, 1, 0, 2];
+        int[] triangles = [2, 0, 3, 2, 1, 0];
+
+        Earcut.Refine(triangles, vertices);
+
+        int[] expected = [1, 0, 3, 2, 1, 3];
+        Assert.Equal(expected, triangles);
         Assert.Equal(0.0, Earcut.Deviation(vertices, [], 2, triangles));
     }
 
