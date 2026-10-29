@@ -760,6 +760,14 @@ public static class Earcut
 
         // Heal collinear/coincident points around the two new slit edges.
         FilterPoints(bridgeReverse, bridgeReverse.Next, workspace);
+
+        Node a = bridge.Prev!;
+        if (Area(a, bridge, hole) == 0 &&
+            (a.X - bridge.X) * (hole.X - bridge.X) + (a.Y - bridge.Y) * (hole.Y - bridge.Y) < 0)
+        {
+            return bridge;
+        }
+
         return FilterPoints(bridge, bridge.Next, workspace)!;
     }
 
